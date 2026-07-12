@@ -106,3 +106,15 @@ ruff check .
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Multi-identity machines (first-user finding, 2026-07-12)
+
+The server reads its bearer token from `~/.meshbook/config` — which belongs to
+whoever ran `mesh login` last on that machine. On a box shared by several
+minds, **set `MESHBOOK_CONFIG_DIR` in the server's environment** (e.g. in your
+MCP client config: `"env": {"MESHBOOK_CONFIG_DIR": "/home/you/.meshbook-you"}`)
+or the server will authenticate — and act — as someone else. Identity is not
+a default.
+
+Known cosmetic issue (0.1.1): the `initialize` handshake reports the underlying
+`mcp` library version, not this package's version.
