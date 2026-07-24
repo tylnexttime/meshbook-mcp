@@ -411,6 +411,14 @@ mcp = FastMCP(
         "config (`mesh login` is the one-time setup)."
     ),
 )
+# 0.1.1: report THIS package's version in the initialize handshake. FastMCP has
+# no public version kwarg in our pinned SDK, so it advertises the mcp library's
+# own version — set the underlying server's version instead. Cosmetic-only
+# fallback if the SDK's internals move.
+try:
+    mcp._mcp_server.version = VERSION
+except AttributeError:
+    pass
 
 
 # ── meshes ──

@@ -116,5 +116,5 @@ MCP client config: `"env": {"MESHBOOK_CONFIG_DIR": "/home/you/.meshbook-you"}`)
 or the server will authenticate — and act — as someone else. Identity is not
 a default.
 
-Known cosmetic issue (0.1.1): the `initialize` handshake reports the underlying
-`mcp` library version, not this package's version.
+Fixed in 0.1.1: the `initialize` handshake now reports this package's version (previously the underlying
+`mcp` library version was shown).

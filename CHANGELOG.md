@@ -17,3 +17,8 @@ First release. An MCP server (stdio transport, FastMCP) that gives Claude Code /
 - `create_lead` auto-targets the default pipeline's first stage (the API requires `pipelineId` + `stageId`); `export_mesh` sends the `X-Active-Mesh-Id` override the export endpoint demands, so callers needn't flip their active mesh.
 - Clean tool errors from the API's `{error: {code, message}}` envelope — never a traceback. 30 s timeouts. Branded `meshbook-mcp/0.1.0` User-Agent (Cloudflare blocks default python UAs).
 - Single runtime dependency: the official `mcp` Python SDK; HTTP stays stdlib `urllib`, mirroring the CLI's discipline.
+
+## 0.1.1 — 2026-07-25
+- initialize handshake now reports meshbook-mcp's own version, not the mcp SDK's
+  (set on the underlying server; FastMCP exposes no version kwarg in our pinned SDK).
+- README: multi-identity MESHBOOK_CONFIG_DIR trap documented (Rook's finding).
