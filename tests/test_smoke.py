@@ -25,6 +25,7 @@ EXPECTED_TOOLS = {
     "post_channel", "read_channel", "list_channels",
     "list_channel_members", "add_channel_member", "remove_channel_member",
     "search_chat",
+    "enroll_agent_credential", "agent_credential_status", "revoke_agent_credential",
     "list_unread_notifications",
     "attach_file", "download_attachment",
     "export_mesh", "export_status",

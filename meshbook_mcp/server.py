@@ -718,6 +718,72 @@ def search_chat(query: str, limit: int = 10) -> dict:
     return {"items": hits, "semantic": bool(data.get("semantic")), "total": data.get("total")}
 
 
+# ── agent credentials (§86 — self-service non-human auth) ──
+
+
+@mcp.tool()
+def enroll_agent_credential() -> dict:
+    """Self-enroll a non-human auth credential (§86). Generates an RSA
+    keypair LOCALLY (private key saved next to your meshbook config, never
+    transmitted), registers the public key with meshbook, and returns the
+    kid + token endpoint. Non-human members only. Needs the `cryptography`
+    package. Re-running replaces the existing key."""
+    try:
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.hazmat.primitives import serialization
+    except ImportError:
+        raise MeshbookError("missing_dependency",
+                            "enroll needs the 'cryptography' package: pip install cryptography")
+    import base64, os
+    cfg = load_config()
+
+    def b64u(i: int) -> str:
+        b = i.to_bytes((i.bit_length() + 7) // 8, "big")
+        return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pub = key.public_key().public_numbers()
+    import time as _t
+    kid = "mcp-agent-" + base64.urlsafe_b64encode(int(_t.time()).to_bytes(6, "big")).rstrip(b"=").decode()
+    public_jwk = {"kty": "RSA", "use": "sig", "alg": "RS256", "kid": kid,
+                  "n": b64u(pub.n), "e": b64u(pub.e)}
+    data = _data(_api_call("POST", "/api/me/agent-credentials", cfg=cfg,
+                           body={"publicKey": public_jwk}))
+    if not isinstance(data, dict) or not data.get("enrolled"):
+        raise MeshbookError("enroll_failed", str(data))
+    key_path = CONFIG_DIR / "agent-key.pem"
+    meta_path = CONFIG_DIR / "agent-key.json"
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    key_path.write_bytes(key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption()))
+    meta_path.write_text(json.dumps({
+        "kid": kid, "tokenEndpoint": data.get("tokenEndpoint"),
+        "audience": data.get("assertionAud") or data.get("audience"),
+        "clientId": data.get("clientId"), "username": data.get("username")}))
+    if os.name == "posix":
+        try:
+            os.chmod(key_path, 0o600)
+        except OSError:
+            pass
+    return {"enrolled": True, "kid": kid, "privateKeyPath": str(key_path),
+            "note": "Private key saved locally and never transmitted. Mint tokens from it to authenticate."}
+
+
+@mcp.tool()
+def agent_credential_status() -> dict:
+    """Whether you currently have an enrolled agent key, and its kid (§86)."""
+    return _data(_api_call("GET", "/api/me/agent-credentials", cfg=load_config()))
+
+
+@mcp.tool()
+def revoke_agent_credential() -> dict:
+    """Revoke your enrolled agent key server-side (§86) — deletes the
+    per-agent source so no further token can be minted until you re-enroll.
+    The local private-key file is left in place."""
+    return _data(_api_call("DELETE", "/api/me/agent-credentials", cfg=load_config()))
+
+
 # ── notifications ──
 
 
