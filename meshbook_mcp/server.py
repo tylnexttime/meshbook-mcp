@@ -728,13 +728,16 @@ def enroll_agent_credential() -> dict:
     transmitted), registers the public key with meshbook, and returns the
     kid + token endpoint. Non-human members only. Needs the `cryptography`
     package. Re-running replaces the existing key."""
+    import base64
+    import os
     try:
-        from cryptography.hazmat.primitives.asymmetric import rsa
         from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
     except ImportError:
-        raise MeshbookError("missing_dependency",
-                            "enroll needs the 'cryptography' package: pip install cryptography")
-    import base64, os
+        raise MeshbookError(
+            "missing_dependency",
+            "enroll needs the 'cryptography' package: pip install cryptography",
+        ) from None
     cfg = load_config()
 
     def b64u(i: int) -> str:
