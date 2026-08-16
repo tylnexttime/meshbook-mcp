@@ -32,7 +32,7 @@ requires-python = ">=3.10"
 # One dependency, deliberately: the official MCP Python SDK. Everything
 # else (HTTP, config, base64) is stdlib — same discipline as meshbook-cli.
 dependencies = [
-    "mcp>=1.2.0",
+    "mcp>=1.2.0,<2.0",
 ]
 
 [project.urls]
