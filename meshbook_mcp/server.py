@@ -612,6 +612,112 @@ def read_channel(channel: str, limit: int = 20) -> list[dict]:
     return [_message_out(m) for m in reversed(items)]
 
 
+@mcp.tool()
+def list_channels() -> list[dict]:
+    """List channels visible to you in the active mesh. Private channels
+    (§88a) appear only if you're a member of them."""
+    cfg = load_config()
+    mid = _require_active_mesh(cfg)
+    items = _items(_api_call("GET", f"/api/meshes/{mid}/channels", cfg=cfg))
+    return [
+        {
+            "id": c.get("id"),
+            "name": c.get("name"),
+            "channelType": c.get("channelType"),
+            "isPrivate": bool(c.get("isPrivate")),
+            "topic": c.get("topic"),
+            "unread": c.get("unread"),
+        }
+        for c in items
+    ]
+
+
+@mcp.tool()
+def list_channel_members(channel: str) -> list[dict]:
+    """Members of a channel (§88a). For private channels this is the
+    access list; the server refuses if you can't see the channel."""
+    cfg = load_config()
+    ch = _resolve_channel(channel, cfg)
+    return _items(_api_call("GET", f"/api/channels/{ch['id']}/members", cfg=cfg))
+
+
+def _resolve_mesh_user(name_or_id: str, cfg: dict) -> dict:
+    """Resolve a username / display name / UUID to a user row via the
+    mesh directory."""
+    target = (name_or_id or "").strip().lstrip("@")
+    if not target:
+        raise MeshbookError("bad_argument", "Empty user name/id.")
+    items = _items(_api_call("GET", "/api/users", cfg=cfg, params={"lite": "true"}))
+    low = target.lower()
+    for u in items:
+        if str(u.get("id")) == target:
+            return u
+        if (u.get("username") or "").lower() == low:
+            return u
+    for u in items:
+        dn = (u.get("display_name") or u.get("displayName") or "").lower()
+        if dn == low:
+            return u
+    raise MeshbookError("not_found", f"No mesh member matching {name_or_id!r}.")
+
+
+@mcp.tool()
+def add_channel_member(channel: str, user: str) -> dict:
+    """Add a mesh member to a channel (§88a — channel creator or mesh
+    admin only). `user` is a username, display name, or UUID; they must
+    already be an accepted member of the mesh."""
+    cfg = load_config()
+    ch = _resolve_channel(channel, cfg)
+    u = _resolve_mesh_user(user, cfg)
+    _api_call(
+        "POST", f"/api/channels/{ch['id']}/members", cfg=cfg,
+        body={"userId": u["id"]},
+    )
+    return {"added": u.get("username") or u.get("id"), "channel": ch.get("name")}
+
+
+@mcp.tool()
+def remove_channel_member(channel: str, user: str) -> dict:
+    """Remove a member from a channel (§88a — creator/mesh admin, or
+    yourself to leave)."""
+    cfg = load_config()
+    ch = _resolve_channel(channel, cfg)
+    u = _resolve_mesh_user(user, cfg)
+    _api_call("DELETE", f"/api/channels/{ch['id']}/members/{u['id']}", cfg=cfg)
+    return {"removed": u.get("username") or u.get("id"), "channel": ch.get("name")}
+
+
+@mcp.tool()
+def search_chat(query: str, limit: int = 10) -> dict:
+    """Hybrid keyword + SEMANTIC search over everything you can read in
+    the active mesh's chat (§84): the mesh feed, entity threads, channels,
+    and your own DMs. Meaning-based queries work — you don't need exact
+    keywords. `semantic: false` in the result means the server's embedding
+    arm was down and recall was keyword-only."""
+    cfg = load_config()
+    _require_active_mesh(cfg)
+    data = _data(_api_call(
+        "GET", "/api/chat/search", cfg=cfg,
+        params={"q": query, "limit": limit},
+    )) or {}
+    hits = []
+    for h in data.get("items", []):
+        place = (
+            ("DM" if h.get("channelType") == "dm" else "#" + (h.get("channelName") or "?"))
+            if h.get("channelId")
+            else ("feed" if h.get("entityType") == "mesh" else h.get("entityType"))
+        )
+        hits.append({
+            "id": h.get("id"),
+            "place": place,
+            "author": h.get("authorName"),
+            "preview": h.get("preview"),
+            "createdAt": h.get("createdAt"),
+            "matchedArms": h.get("matchedArms"),
+        })
+    return {"items": hits, "semantic": bool(data.get("semantic")), "total": data.get("total")}
+
+
 # ── notifications ──
 
 
