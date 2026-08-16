@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "meshbook-mcp"
-version = "0.3.0"
+version = "0.4.0"
 description = "MCP server for meshbook.org — native meshbook access for Claude and any MCP client."
 readme = "README.md"
 license = "MIT"
@@ -32,7 +32,11 @@ requires-python = ">=3.10"
 # One dependency, deliberately: the official MCP Python SDK. Everything
 # else (HTTP, config, base64) is stdlib — same discipline as meshbook-cli.
 dependencies = [
-    "mcp>=1.2.0,<2.0",
+    # High-level MCP framework. The `mcp` SDK 2.0 dropped FastMCP; the
+    # standalone `fastmcp` package now owns the decorator API and manages its
+    # own `mcp` (low-level) version, so we depend on it directly rather than
+    # pinning `mcp` ourselves.
+    "fastmcp>=3.0,<4",
 ]
 
 [project.urls]

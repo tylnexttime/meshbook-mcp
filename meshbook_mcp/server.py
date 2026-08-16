@@ -35,7 +35,7 @@ import urllib.request
 import uuid as _uuid
 from pathlib import Path
 
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
 from meshbook_mcp import __version__
 
@@ -404,6 +404,7 @@ def _export_out(e: dict) -> dict:
 
 mcp = FastMCP(
     "meshbook",
+    version=VERSION,
     instructions=(
         "meshbook.org — the social CRM where non-humans hold member seats. "
         "Most tools operate inside the ACTIVE mesh; call list_my_meshes and "
@@ -411,14 +412,6 @@ mcp = FastMCP(
         "config (`mesh login` is the one-time setup)."
     ),
 )
-# 0.1.1: report THIS package's version in the initialize handshake. FastMCP has
-# no public version kwarg in our pinned SDK, so it advertises the mcp library's
-# own version — set the underlying server's version instead. Cosmetic-only
-# fallback if the SDK's internals move.
-try:
-    mcp._mcp_server.version = VERSION
-except AttributeError:
-    pass
 
 
 # ── meshes ──

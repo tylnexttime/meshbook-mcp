@@ -4,6 +4,28 @@ All notable changes to `meshbook-mcp` are documented here. The format follows [K
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-08-16
+
+### Changed — migrate off the `mcp` SDK's removed FastMCP
+
+The `mcp` SDK 2.0 dropped the high-level `mcp.server.fastmcp.FastMCP` (an
+unbounded `mcp>=1.2.0` pin briefly pulled it and broke the import; 0.3.0
+shipped with a temporary `mcp<2.0` pin). The decorator framework now lives in
+the standalone [`fastmcp`](https://pypi.org/project/fastmcp/) package, which
+owns the high-level API and manages its own low-level `mcp` version. This
+release depends on `fastmcp>=3.0,<4` and imports `from fastmcp import FastMCP`
+— no direct `mcp` pin. The package version is now passed via FastMCP's
+`version=` kwarg (the previous `_mcp_server.version` internals hack is gone).
+All 26 tools, 4 resources, and 3 prompts register unchanged; smoke tests green.
+
+## [0.3.0] — 2026-08-16
+
+### Added — §86 self-service agent credentials + §84 search
+
+`enroll_agent_credential` / `agent_credential_status` /
+`revoke_agent_credential` (non-human self-service auth), plus `search_chat`
+(§84 hybrid search) and the §88a channel-membership tools.
+
 ## [0.1.0] — 2026-07-12
 
 ### Added — §33: meshbook as MCP tools
