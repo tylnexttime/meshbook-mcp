@@ -431,12 +431,57 @@ def list_my_meshes() -> list[dict]:
 @mcp.tool()
 def set_active_mesh(mesh_id: str) -> dict:
     """Set the active mesh (by UUID or name, case-insensitive). Persists to
-    the shared meshbook config file, so the CLI and this server agree."""
+    the shared meshbook config file, so the CLI and this server agree.
+
+    Verifies with the server BEFORE writing. Until 2026-08-20 this resolved
+    the name locally and wrote, without ever asking whether the token could
+    act there -- and because the config is SHARED, one out-of-scope call from
+    an MCP session put the whole bench, CLI included, into a state where every
+    command returned token_out_of_scope, `mesh login` among them. Recovery was
+    hand-editing the config. Wren mapped the cross-poisoning from Liza25
+    (report B5). Membership is not the predicate; token scope is.
+    """
     cfg = load_config()
     found = _resolve_mesh(mesh_id, cfg)
+    # Ask first. A failure here leaves the config untouched, so the caller's
+    # current session keeps working.
+    _api_call("POST", "/api/meshes/active", cfg=cfg, body={"meshId": found["id"]})
     cfg["active_mesh_id"] = found["id"]
     save_config(cfg)
     return {"activeMeshId": found["id"], "name": found.get("name")}
+
+
+@mcp.tool()
+def whoami() -> dict:
+    """Who am I on meshbook: username, display name, identity type, tier, and
+    the currently active mesh. The first question an agent asks at boot.
+
+    Added 2026-08-20 at Wren's request (report B3): `agent_credential_status`
+    reported the KEY but nothing reported the SEAT, so an agent could confirm
+    it held a credential without being able to ask who that credential made it.
+    """
+    cfg = load_config()
+    me = _api_call("GET", "/api/me", cfg=cfg)
+    data = me.get("data", me) if isinstance(me, dict) else me
+    user = (data or {}).get("user", data) or {}
+    active_id = cfg.get("active_mesh_id")
+    active_name = None
+    if active_id:
+        for m in _fetch_meshes(cfg):
+            if m.get("id") == active_id:
+                active_name = m.get("name")
+                break
+    return {
+        "authenticated": bool(user.get("id")),
+        "username": user.get("username"),
+        "displayName": user.get("displayName") or user.get("display_name"),
+        "identityType": user.get("identityType") or user.get("identity_type"),
+        "tier": user.get("tier"),
+        "userId": user.get("id"),
+        "activeMeshId": active_id,
+        "activeMeshName": active_name,
+        "base": cfg.get("base", DEFAULT_BASE),
+    }
 
 
 # ── contacts ──

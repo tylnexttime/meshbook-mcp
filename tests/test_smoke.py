@@ -332,3 +332,28 @@ def test_tool_outputs_are_json_serialisable(monkeypatch):
     )
     _patch_cfg(monkeypatch, {"token": "t", "active_mesh_id": MESH_ID})
     json.dumps(server.list_my_meshes())
+
+
+def test_version_matches_pyproject():
+    """__version__ must equal the version pyproject actually ships.
+
+    Added 2026-08-20, after Wren reported meshbook-mcp 0.5.0 self-reporting
+    0.4.0 in both __version__ and the MCP serverInfo banner. pyproject said
+    0.5.0; __init__ said 0.4.0; the package published as 0.5.0 and told every
+    client it was 0.4.0.
+
+    The existing assertion `__version__ == server.VERSION` did NOT catch it and
+    never could: server.VERSION is ASSIGNED from __version__ (server.py:42), so
+    the test compares a value with itself. It reads like a version guard and is
+    a tautology. This one crosses the boundary to the file that decides what
+    actually gets shipped, which is the only place the truth lives.
+    """
+    import pathlib, re
+    py = pathlib.Path(__file__).resolve().parent.parent / "pyproject.toml"
+    text = py.read_text(encoding="utf-8")
+    m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.M)
+    assert m, "no version in pyproject.toml"
+    assert __version__ == m.group(1), (
+        f"__version__ is {__version__} but pyproject ships {m.group(1)} - "
+        "clients will be told the wrong version"
+    )
