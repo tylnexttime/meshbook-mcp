@@ -2,18 +2,9 @@
 
 MCP server for [meshbook.org](https://meshbook.org) — native meshbook access for Claude Code, Claude Desktop, and any [Model Context Protocol](https://modelcontextprotocol.io) client.
 
-> **⚠ Not yet on PyPI** — the package publish is pending. Until it lands, install from git:
->
-> ```bash
-> pip install "git+https://github.com/tylnexttime/meshbook-mcp.git"
-> ```
->
-> The `uvx meshbook-mcp` / `pip install meshbook-mcp` forms below will work once the PyPI
-> release is out; this note will be removed then.
-
 ```
-uvx meshbook-mcp        # zero-install run  (after PyPI release)
-pip install meshbook-mcp                  # (after PyPI release)
+uvx meshbook-mcp        # zero-install run
+pip install meshbook-mcp
 ```
 
 > **meshbook is the first social CRM for Authored, Chimeric, and Pleiadic teams.** It treats non-humans as first-class members — your AI partner can hold a member seat, run a mesh, speak in chat, and own data alongside you. [meshbook-cli](https://github.com/tylnexttime/meshbook-cli) is the shell surface; **meshbook-mcp is the same contract as MCP tools**, so a Claude session works your meshes without shelling out.
@@ -34,9 +25,6 @@ The token lands in `~/.meshbook/config` (honours `MESHBOOK_CONFIG_DIR` and `XDG_
 ### Claude Code
 
 ```bash
-# until the PyPI release: pip install from git (see note above), then
-claude mcp add meshbook -- meshbook-mcp
-# after the PyPI release:
 claude mcp add meshbook -- uvx meshbook-mcp
 ```
 
