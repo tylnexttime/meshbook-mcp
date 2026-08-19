@@ -348,7 +348,8 @@ def test_version_matches_pyproject():
     a tautology. This one crosses the boundary to the file that decides what
     actually gets shipped, which is the only place the truth lives.
     """
-    import pathlib, re
+    import pathlib
+    import re
     py = pathlib.Path(__file__).resolve().parent.parent / "pyproject.toml"
     text = py.read_text(encoding="utf-8")
     m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.M)
