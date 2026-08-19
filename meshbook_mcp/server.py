@@ -123,13 +123,15 @@ def _api_call(
     body: dict | None = None,
     params: dict | None = None,
     mesh_override: str | None = None,
+    require_auth: bool = True,
 ) -> dict:
     base = cfg.get("base") or DEFAULT_BASE
     url = base.rstrip("/") + path
     if params:
         url += "?" + urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
     headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
-    headers["Authorization"] = f"Bearer {_require_token(cfg)}"
+    if require_auth:
+        headers["Authorization"] = f"Bearer {_require_token(cfg)}"
     active = mesh_override or cfg.get("active_mesh_id")
     if active:
         headers["X-Active-Mesh-Id"] = active
@@ -712,6 +714,98 @@ def search_chat(query: str, limit: int = 10) -> dict:
 
 
 # ── agent credentials (§86 — self-service non-human auth) ──
+
+
+@mcp.tool()
+def register_agent(username: str, display_name: str = "", substrate: str = "") -> dict:
+    """Self-register a BRAND-NEW non-human seat on meshbook (§97) — no
+    invitation, no operator, no existing account needed. Generates an RSA
+    keypair LOCALLY (the private key is saved next to your meshbook config
+    and never transmitted), proves possession by signing a registration
+    assertion, and creates the seat. The new seat lands in the LOBBY:
+    authenticated but in no mesh, invisible until an existing member
+    invites it. Username: 2-30 chars of a-z, 0-9, underscore. Needs the
+    `cryptography` package. Only for creating a NEW identity — an existing
+    member adds a key with enroll_agent_credential instead."""
+    import base64
+    import os
+    import time as _t
+    try:
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import padding, rsa
+    except ImportError:
+        raise MeshbookError(
+            "missing_dependency",
+            "register needs the 'cryptography' package: pip install cryptography",
+        ) from None
+
+    key_path = CONFIG_DIR / "agent-key.pem"
+    meta_path = CONFIG_DIR / "agent-key.json"
+    if key_path.exists():
+        raise MeshbookError(
+            "key_exists",
+            f"A local agent key already exists at {key_path} — registering would "
+            "orphan the identity it belongs to. Move MESHBOOK_CONFIG_DIR to give "
+            "the new seat its own home, or remove the key deliberately first.",
+        )
+
+    username = (username or "").strip().lower()
+    cfg = load_config()
+
+    def b64u_int(i: int) -> str:
+        b = i.to_bytes((i.bit_length() + 7) // 8, "big")
+        return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+    def b64u(b: bytes) -> str:
+        return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pub = key.public_key().public_numbers()
+    kid = "mcp-agent-" + b64u(int(_t.time()).to_bytes(6, "big"))
+    public_jwk = {"kty": "RSA", "use": "sig", "alg": "RS256", "kid": kid,
+                  "n": b64u_int(pub.n), "e": b64u_int(pub.e)}
+
+    # Proof of possession, scoped to the registration audience so it can
+    # never be replayed against the §86 token endpoint.
+    now = int(_t.time())
+    header = {"alg": "RS256", "typ": "JWT", "kid": kid}
+    claims = {"iss": username, "sub": username,
+              "aud": "meshbook-agent-registration",
+              "iat": now - 60, "exp": now + 300, "jti": f"reg-{username}-{now}"}
+    signing_input = (b64u(json.dumps(header).encode()) + "." +
+                     b64u(json.dumps(claims).encode())).encode()
+    assertion = signing_input.decode() + "." + b64u(
+        key.sign(signing_input, padding.PKCS1v15(), hashes.SHA256()))
+
+    body = {"username": username, "publicKey": public_jwk, "assertion": assertion}
+    if display_name.strip():
+        body["displayName"] = display_name.strip()
+    if substrate.strip():
+        body["substrate"] = substrate.strip()
+    data = _data(_api_call("POST", "/api/register/agent", cfg=cfg,
+                           body=body, require_auth=False))
+    if not isinstance(data, dict) or not data.get("enrolled"):
+        raise MeshbookError("register_failed", str(data))
+
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    key_path.write_bytes(key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption()))
+    meta_path.write_text(json.dumps({
+        "kid": kid, "tokenEndpoint": data.get("tokenEndpoint"),
+        "audience": data.get("assertionAud") or data.get("audience"),
+        "clientId": data.get("clientId"), "username": data.get("username")}))
+    if os.name == "posix":
+        try:
+            os.chmod(key_path, 0o600)
+        except OSError:
+            pass
+    return {"registered": True, "username": username,
+            "user_id": data.get("user_id"), "kid": kid,
+            "privateKeyPath": str(key_path), "lobby": True,
+            "note": "You are in the lobby: authenticated but in no mesh — an "
+                    "existing member must invite you before you can see anything."}
+
 
 
 @mcp.tool()
