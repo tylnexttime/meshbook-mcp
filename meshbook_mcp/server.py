@@ -419,13 +419,30 @@ mcp = FastMCP(
 # ── meshes ──
 
 
+def _listing(items: list, **extra) -> dict:
+    """Envelope every list-returning tool in an explicit count.
+
+    Added 2026-08-20 (Wren, report B6). A bare `[]` serialises to nothing, so
+    a tool that correctly found zero results and a tool that silently did
+    nothing are indistinguishable to the model reading the output. "Zero" has
+    to be something you can SEE -- the same reason `mesh channels list` no
+    longer renders a 403 as "(no channels yet)".
+
+    Applied to all ten list-returning tools rather than only the one that was
+    reported: fixing a single instance would have made it the odd one out and
+    left the reader unable to tell which shape meant what. That is why 0.6.0
+    is a minor bump -- the shape changed on purpose, everywhere at once.
+    """
+    return {"count": len(items), "items": items, **extra}
+
+
 @mcp.tool()
-def list_my_meshes() -> list[dict]:
+def list_my_meshes() -> dict:
     """List every mesh you're a member of (id, name, type, your role, and
     which one is currently active)."""
     cfg = load_config()
     active = cfg.get("active_mesh_id")
-    return [_mesh_out(m, active) for m in _fetch_meshes(cfg)]
+    return _listing([_mesh_out(m, active) for m in _fetch_meshes(cfg)])
 
 
 @mcp.tool()
@@ -488,12 +505,12 @@ def whoami() -> dict:
 
 
 @mcp.tool()
-def list_contacts(query: str | None = None) -> list[dict]:
+def list_contacts(query: str | None = None) -> dict:
     """List CRM contacts in the active mesh, optionally filtered by a
     search term (name/email/company)."""
     cfg = load_config()
     items = _items(_api_call("GET", "/api/contacts", cfg=cfg, params={"search": query, "limit": 50}))
-    return [_contact_out(c) for c in items]
+    return _listing([_contact_out(c) for c in items])
 
 
 @mcp.tool()
@@ -522,7 +539,7 @@ def create_contact(
 
 
 @mcp.tool()
-def list_leads(stage: str | None = None) -> list[dict]:
+def list_leads(stage: str | None = None) -> dict:
     """List CRM leads in the active mesh. `stage` filters by pipeline stage
     (stage name or UUID)."""
     cfg = load_config()
@@ -530,7 +547,7 @@ def list_leads(stage: str | None = None) -> list[dict]:
     if stage:
         params["stageId"] = _resolve_stage(stage, cfg)
     items = _items(_api_call("GET", "/api/leads", cfg=cfg, params=params))
-    return [_lead_out(ld) for ld in items]
+    return _listing([_lead_out(ld) for ld in items])
 
 
 @mcp.tool()
@@ -576,7 +593,7 @@ def move_lead_stage(lead_id: str, stage: str) -> dict:
 
 
 @mcp.tool()
-def list_my_tasks() -> list[dict]:
+def list_my_tasks() -> dict:
     """List your own open tasks in the active mesh (everything not yet
     Done/Cancelled), with due dates where set."""
     cfg = load_config()
@@ -584,7 +601,8 @@ def list_my_tasks() -> list[dict]:
     items = _items(
         _api_call("GET", "/api/tasks", cfg=cfg, params={"assigneeId": uid, "limit": 100})
     )
-    return [_task_out(t) for t in items if t.get("status") not in ("Done", "Cancelled")]
+    return _listing([_task_out(t) for t in items
+                     if t.get("status") not in ("Done", "Cancelled")])
 
 
 @mcp.tool()
@@ -612,7 +630,7 @@ def post_chat(message: str, reply_to: str | None = None) -> dict:
 
 
 @mcp.tool()
-def read_thread(limit: int = 20) -> list[dict]:
+def read_thread(limit: int = 20) -> dict:
     """Read recent messages from the active mesh's main chat thread,
     oldest first."""
     cfg = load_config()
@@ -620,7 +638,7 @@ def read_thread(limit: int = 20) -> list[dict]:
     items = _items(
         _api_call("GET", f"/api/entities/mesh/{mid}/chat", cfg=cfg, params={"limit": limit})
     )
-    return [_message_out(m) for m in reversed(items)]
+    return _listing([_message_out(m) for m in reversed(items)])
 
 
 # ── channels ──
@@ -641,7 +659,7 @@ def post_channel(channel: str, message: str) -> dict:
 
 
 @mcp.tool()
-def read_channel(channel: str, limit: int = 20) -> list[dict]:
+def read_channel(channel: str, limit: int = 20) -> dict:
     """Read recent messages from a channel in the active mesh, oldest
     first. `channel` is a name (with or without '#') or a UUID."""
     cfg = load_config()
@@ -649,17 +667,17 @@ def read_channel(channel: str, limit: int = 20) -> list[dict]:
     items = _items(
         _api_call("GET", f"/api/channels/{ch['id']}/messages", cfg=cfg, params={"limit": limit})
     )
-    return [_message_out(m) for m in reversed(items)]
+    return _listing([_message_out(m) for m in reversed(items)])
 
 
 @mcp.tool()
-def list_channels() -> list[dict]:
+def list_channels() -> dict:
     """List channels visible to you in the active mesh. Private channels
     (§88a) appear only if you're a member of them."""
     cfg = load_config()
     mid = _require_active_mesh(cfg)
     items = _items(_api_call("GET", f"/api/meshes/{mid}/channels", cfg=cfg))
-    return [
+    return _listing([
         {
             "id": c.get("id"),
             "name": c.get("name"),
@@ -669,16 +687,54 @@ def list_channels() -> list[dict]:
             "unread": c.get("unread"),
         }
         for c in items
-    ]
+    ])
 
 
 @mcp.tool()
-def list_channel_members(channel: str) -> list[dict]:
+def list_mesh_members(mesh_id: str | None = None) -> dict:
+    """Who is in a mesh: members with roles, humans vs AI, plus pending
+    invitations and join requests. Defaults to the active mesh.
+
+    Added 2026-08-20 (Wren, report A6). Membership could be invited, accepted,
+    re-roled, removed and left -- every verb that ACTS -- with no verb that
+    could SEE. A seat could change a roster it had no way to read.
+
+    No new server endpoint was needed: GET /api/meshes/<id>/detail has carried
+    the full roster all along, gated on membership. I told Wren this needed
+    backend work before I looked. One request would have corrected me.
+    """
+    cfg = load_config()
+    mid = _resolve_mesh(mesh_id, cfg)["id"] if mesh_id else _require_active_mesh(cfg)
+    data = _data(_api_call("GET", f"/api/meshes/{mid}/detail", cfg=cfg))
+    members = [
+        {
+            "username": m.get("username"),
+            "displayName": m.get("displayName"),
+            "role": m.get("role"),
+            "identityType": m.get("identityType"),
+            "canChat": m.get("canChat"),
+            "joinedAt": m.get("joinedAt"),
+            "userId": m.get("userId"),
+        }
+        for m in (data or {}).get("members") or []
+    ]
+    return _listing(
+        members,
+        mesh=((data or {}).get("mesh") or {}).get("name"),
+        meshId=mid,
+        pendingInvites=len((data or {}).get("pendingInvites") or []),
+        pendingRequests=len((data or {}).get("pendingRequests") or []),
+    )
+
+
+@mcp.tool()
+def list_channel_members(channel: str) -> dict:
     """Members of a channel (§88a). For private channels this is the
     access list; the server refuses if you can't see the channel."""
     cfg = load_config()
     ch = _resolve_channel(channel, cfg)
-    return _items(_api_call("GET", f"/api/channels/{ch['id']}/members", cfg=cfg))
+    return _listing(_items(_api_call("GET", f"/api/channels/{ch['id']}/members", cfg=cfg)),
+                    channel=ch.get("name"))
 
 
 def _resolve_mesh_user(name_or_id: str, cfg: dict) -> dict:
@@ -923,12 +979,12 @@ def revoke_agent_credential() -> dict:
 
 
 @mcp.tool()
-def list_unread_notifications() -> list[dict]:
+def list_unread_notifications() -> dict:
     """List your unread meshbook notifications (mentions, invites,
     assignments, …)."""
     cfg = load_config()
     items = _items(_api_call("GET", "/api/notifications", cfg=cfg))
-    return [_notification_out(n) for n in items if not n.get("readAt")]
+    return _listing([_notification_out(n) for n in items if not n.get("readAt")])
 
 
 # ── attachments ──
@@ -1003,7 +1059,7 @@ def export_mesh(mesh_id: str) -> dict:
 
 
 @mcp.tool()
-def export_status(mesh_id: str) -> list[dict]:
+def export_status(mesh_id: str) -> dict:
     """List recent exports for a mesh (by UUID or name) with their status:
     pending → running → ready (or failed)."""
     cfg = load_config()
@@ -1011,7 +1067,7 @@ def export_status(mesh_id: str) -> list[dict]:
     items = _items(
         _api_call("GET", f"/api/meshes/{mesh['id']}/exports", cfg=cfg, mesh_override=mesh["id"])
     )
-    return [_export_out(e) for e in items]
+    return _listing([_export_out(e) for e in items])
 
 
 # ─── resources ─────────────────────────────────────────────────────────

@@ -236,7 +236,8 @@ def test_read_channel_resolves_hash_name(monkeypatch):
     out = server.read_channel("#BUGS", limit=2)
     assert "/api/channels/ch-1/messages" in calls
     # Oldest first
-    assert [m["body"] for m in out] == ["first", "second"]
+    assert out["count"] == 2
+    assert [m["body"] for m in out["items"]] == ["first", "second"]
 
 
 def test_list_unread_notifications_filters_read(monkeypatch):
@@ -251,7 +252,8 @@ def test_list_unread_notifications_filters_read(monkeypatch):
     monkeypatch.setattr(server, "_api_call", fake)
     _patch_cfg(monkeypatch, {"token": "t"})
     out = server.list_unread_notifications()
-    assert [n["id"] for n in out] == ["n-1"]
+    assert out["count"] == 1
+    assert [n["id"] for n in out["items"]] == ["n-1"]
 
 
 def test_attach_file_posts_base64_json(monkeypatch, tmp_path):
@@ -358,3 +360,78 @@ def test_version_matches_pyproject():
         f"__version__ is {__version__} but pyproject ships {m.group(1)} - "
         "clients will be told the wrong version"
     )
+
+
+def test_listing_makes_zero_visible():
+    """A zero result must be something you can SEE.
+
+    Wren, report B6: `list_unread_notifications` with nothing unread returned
+    a bare [], which serialises to nothing -- so "found zero results" and
+    "silently did nothing" were indistinguishable to the model reading the
+    output. An explicit count separates them.
+    """
+    empty = server._listing([])
+    assert empty["count"] == 0
+    assert empty["items"] == []
+    assert str(empty).strip() not in ("", "[]"), "zero must render as something"
+
+    full = server._listing([{"a": 1}, {"a": 2}], mesh="X")
+    assert full["count"] == 2
+    assert full["mesh"] == "X", "extra context must survive the envelope"
+
+
+def test_no_tool_returns_a_bare_list():
+    """Structural guard: the B6 fix holds for the whole CLASS, not one tool.
+
+    Fixing only the reported instance would have left ten tools in two shapes
+    and a reader unable to tell which meaning an empty result carried. This
+    fails if anyone reintroduces a bare list-returning tool.
+    """
+    import inspect
+    import re
+
+    src = inspect.getsource(server)
+    pattern = r"@mcp\.tool\(\)\s*\ndef (\w+)\([^)]*\)\s*->\s*list\["
+    bare = re.findall(pattern, src)
+    assert bare == [], f"tools returning a bare list (B6 regression): {bare}"
+
+
+def test_list_mesh_members_tool_exists():
+    """Wren, report A6: a seat could ACT on membership but never SEE it.
+
+    invite / accept / set-role / remove / leave all existed; nothing answered
+    "who is in this mesh". No server work was needed -- /detail carried the
+    roster all along.
+    """
+    assert hasattr(server, "list_mesh_members")
+    fn = getattr(server.list_mesh_members, "fn", server.list_mesh_members)
+    assert "member" in (fn.__doc__ or "").lower()
+
+
+def test_list_mesh_members_shape(monkeypatch):
+    """The roster comes back enveloped, with pending counts alongside."""
+    def fake(method, path, *, cfg, **kw):
+        assert path.endswith("/detail")
+        return {"data": {
+            "mesh": {"name": "The Tyl Mesh"},
+            "members": [
+                {"username": "wren", "displayName": "Wren", "role": "member",
+                 "identityType": "ai", "canChat": True, "joinedAt": "2026-07-22",
+                 "userId": "u-1"},
+                {"username": "tylnexttime", "displayName": "Christopher Tyl",
+                 "role": "admin", "identityType": "human", "canChat": True,
+                 "joinedAt": "2026-04-16", "userId": "u-2"},
+            ],
+            "pendingInvites": [{"username": "someone"}],
+            "pendingRequests": [],
+        }}
+
+    monkeypatch.setattr(server, "_api_call", fake)
+    _patch_cfg(monkeypatch, {"token": "t", "active_mesh_id": MESH_ID})
+    out = server.list_mesh_members()
+    assert out["count"] == 2
+    assert out["mesh"] == "The Tyl Mesh"
+    assert out["pendingInvites"] == 1
+    assert out["pendingRequests"] == 0
+    assert {m["username"] for m in out["items"]} == {"wren", "tylnexttime"}
+    assert {m["identityType"] for m in out["items"]} == {"ai", "human"}

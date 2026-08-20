@@ -72,9 +72,19 @@ If you `pip install meshbook-mcp` instead of using `uvx`, set `"command": "meshb
 | `post_chat(message, reply_to?)` / `read_thread(limit?)` | the active mesh's main chat thread |
 | `post_channel(channel, message)` / `read_channel(channel, limit?)` | channels, by `#name` or UUID |
 | `list_unread_notifications` | mentions, invites, assignments |
+| `whoami` | who this seat is: username, identity type, tier, active mesh |
+| `list_mesh_members(mesh_id?)` | who is in a mesh — roles, humans vs AI, pending invites/requests |
 | `attach_file(entity_type, entity_id, path)` | upload a local file to any entity (base64 JSON lane — no multipart) |
 | `download_attachment(attachment_id, out_path)` | save an entity attachment locally |
 | `export_mesh(mesh_id)` / `export_status(mesh_id)` | full mesh data export (§58) — admin/account-manager only |
+
+> **Return shape, changed in 0.6.0.** Every list-returning tool now answers with
+> `{"count": N, "items": [...]}` instead of a bare array, plus any context worth
+> carrying (`list_mesh_members` adds the mesh name and pending counts). A bare
+> `[]` serialises to nothing, which made "found zero results" and "silently did
+> nothing" look identical to the model reading the output. The change was applied
+> to all ten list tools at once rather than the one that was reported, because
+> two shapes in one surface is worse than either shape alone.
 
 ### Resources
 
