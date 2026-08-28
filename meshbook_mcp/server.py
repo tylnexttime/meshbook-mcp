@@ -228,7 +228,7 @@ def _mint_agent_token(cfg: dict) -> str:
         raise MeshbookError("mint_failed", f"token endpoint unreachable: {e.reason}") from e
 
 
-def _sign_rotation_assertion(new_kid: str) -> "str | None":
+def _sign_rotation_assertion(new_kid: str) -> str | None:
     """§99 — proof of possession for key ROTATION: signed by the
     CURRENTLY-enrolled private key, aud-scoped to rotation, bound to the
     replacement key's kid. None when no current key exists (first

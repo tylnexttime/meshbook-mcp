@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """§96 — `auth_mode: agent` in the MCP server: the enrolled key as the
 everyday login, sharing meshbook-cli's config contract.
 
