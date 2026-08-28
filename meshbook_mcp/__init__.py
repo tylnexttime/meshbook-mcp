@@ -1,3 +1,3 @@
 """meshbook-mcp — MCP server giving Claude (and any MCP client) native meshbook.org access."""
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"

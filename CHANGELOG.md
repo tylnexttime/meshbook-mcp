@@ -4,6 +4,30 @@ All notable changes to `meshbook-mcp` are documented here. The format follows [K
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-08-28
+
+### Added — §96: the key lane as the everyday login
+
+- **`auth_mode: "agent"`** honoured from the shared meshbook-cli config: every tool
+  call signs an RFC 7523 assertion with the local key, mints a 5-minute Authentik
+  token, caches it in-process, re-mints ≤30 s before expiry, and retries once on a
+  401. The stored bearer becomes the fallback — `mesh agent enroll` in a terminal
+  upgrades a live Claude session's auth with zero extra steps, and a bench with an
+  enrolled key and no bearer runs every tool.
+- `enroll_agent_credential` / `register_agent` set `auth_mode: "agent"` on success;
+  `revoke_agent_credential` clears it (with a no-lane warning when no bearer remains).
+
+### Changed — §99: rotation proves possession of the outgoing key
+
+- Re-enrolling over an existing key sends `rotationAssertion` (signed by the current
+  key, `aud "meshbook-agent-rotation"`, bound to the new kid), required by the server
+  on the agent-JWT lane. The outgoing key/meta survive as `.bak`.
+
+## [0.7.0-lineage note]
+
+0.5.0 (§97 register_agent), 0.5.1 (whoami, active-mesh trap, real version guard),
+0.6.0 (explicit counts on listings + roster tool) — see git history.
+
 ## [0.4.0] — 2026-08-16
 
 ### Changed — migrate off the `mcp` SDK's removed FastMCP

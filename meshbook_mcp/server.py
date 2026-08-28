@@ -110,9 +110,169 @@ def _require_token(cfg: dict) -> str:
         raise MeshbookError(
             "not_signed_in",
             "No meshbook token found. One-time setup: `pip install meshbook-cli` "
-            f"then `mesh login` (writes {CONFIG_PATH}).",
+            f"then `mesh login` (writes {CONFIG_PATH}) — or, for a key-holding "
+            "seat, `mesh login --agent` / the register_agent tool (§96).",
         )
     return token
+
+
+# ─── §96: the agent-JWT lane as an everyday login ──────────────────────
+#
+# Same config contract as meshbook-cli: `auth_mode: "agent"` plus the key
+# material at CONFIG_DIR/agent-key.pem + agent-key.json. When set, every
+# tool call signs an RFC 7523 assertion locally, exchanges it for a
+# 5-minute Authentik token, caches it in-process, and re-mints ≤30 s
+# before expiry. The stored mb_token_ (if any) is only the fallback — a
+# bench with an enrolled key and NO bearer runs every tool (§96
+# acceptance). `mesh agent enroll` in a terminal therefore upgrades this
+# Claude session's auth with zero extra steps.
+
+_AGENT_TOKEN_CACHE = {"token": None, "exp": 0.0}
+_REMINT_MARGIN_S = 30
+
+
+def _agent_key_paths() -> tuple[Path, Path]:
+    return CONFIG_DIR / "agent-key.pem", CONFIG_DIR / "agent-key.json"
+
+
+def _agent_meta() -> dict:
+    _, meta_path = _agent_key_paths()
+    if not meta_path.exists():
+        return {}
+    try:
+        return json.loads(meta_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _invalidate_agent_token() -> None:
+    _AGENT_TOKEN_CACHE["token"] = None
+    _AGENT_TOKEN_CACHE["exp"] = 0.0
+
+
+def _agent_ready(cfg: dict) -> bool:
+    if cfg.get("auth_mode") != "agent":
+        return False
+    key_path, _ = _agent_key_paths()
+    return key_path.exists() and bool(_agent_meta().get("kid"))
+
+
+def _jwt_exp(token: str) -> float:
+    """Best-effort exp from a compact JWT; falls back to now+300 (the §86
+    token lifetime) when the payload won't parse."""
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        exp = json.loads(base64.b64decode(payload.replace("-", "+").replace("_", "/"))).get("exp")
+        if isinstance(exp, (int, float)):
+            return float(exp)
+    except Exception:
+        pass
+    import time as _t
+    return _t.time() + 300
+
+
+def _b64u(b: bytes) -> str:
+    return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+
+def _mint_agent_token(cfg: dict) -> str:
+    """Sign a fresh RFC 7523 assertion with the local key and exchange it
+    for a 5-minute access token. Backdates iat by 60 s so mild clock skew
+    never makes a just-minted assertion look 'not yet valid' (§86)."""
+    import time as _t
+    try:
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import padding
+    except ImportError:
+        raise MeshbookError(
+            "missing_dependency",
+            "the agent auth lane needs the 'cryptography' package: "
+            "pip install cryptography",
+        ) from None
+    key_path, _ = _agent_key_paths()
+    meta = _agent_meta()
+    if not key_path.exists() or not meta.get("kid"):
+        raise MeshbookError(
+            "no_agent_key",
+            f"auth_mode is 'agent' but no usable key/meta in {CONFIG_DIR}. "
+            "Enroll first (mesh agent enroll) or switch back to a bearer.",
+        )
+    key = serialization.load_pem_private_key(key_path.read_bytes(), password=None)
+    username = meta["username"]
+    now = int(_t.time())
+    header = {"alg": "RS256", "typ": "JWT", "kid": meta["kid"]}
+    claims = {"iss": username, "sub": username, "aud": meta["audience"],
+              "iat": now - 60, "exp": now + 300, "jti": f"{username}-{now}"}
+    signing_input = (_b64u(json.dumps(header).encode()) + "." +
+                     _b64u(json.dumps(claims).encode())).encode()
+    assertion = signing_input.decode() + "." + _b64u(
+        key.sign(signing_input, padding.PKCS1v15(), hashes.SHA256()))
+    form = urllib.parse.urlencode({
+        "grant_type": "client_credentials",
+        "client_id": meta["clientId"],
+        "client_assertion_type": "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+        "client_assertion": assertion,
+        "scope": "openid email profile",
+    }).encode()
+    req = urllib.request.Request(
+        meta["tokenEndpoint"], data=form, method="POST",
+        headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            return json.load(r)["access_token"]
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "replace")[:200] if e.fp else ""
+        raise MeshbookError("mint_failed", f"token mint failed: {detail}", e.code) from e
+    except urllib.error.URLError as e:
+        raise MeshbookError("mint_failed", f"token endpoint unreachable: {e.reason}") from e
+
+
+def _sign_rotation_assertion(new_kid: str) -> "str | None":
+    """§99 — proof of possession for key ROTATION: signed by the
+    CURRENTLY-enrolled private key, aud-scoped to rotation, bound to the
+    replacement key's kid. None when no current key exists (first
+    enrollment — nothing to prove)."""
+    import time as _t
+    try:
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import padding
+    except ImportError:
+        return None
+    key_path, _ = _agent_key_paths()
+    meta = _agent_meta()
+    if not key_path.exists() or not meta.get("kid") or not meta.get("username"):
+        return None
+    key = serialization.load_pem_private_key(key_path.read_bytes(), password=None)
+    now = int(_t.time())
+    header = {"alg": "RS256", "typ": "JWT", "kid": meta["kid"]}
+    claims = {"sub": meta["username"], "aud": "meshbook-agent-rotation",
+              "new_kid": new_kid, "iat": now - 60, "exp": now + 300,
+              "jti": f"rot-{meta['username']}-{now}"}
+    signing_input = (_b64u(json.dumps(header).encode()) + "." +
+                     _b64u(json.dumps(claims).encode())).encode()
+    return signing_input.decode() + "." + _b64u(
+        key.sign(signing_input, padding.PKCS1v15(), hashes.SHA256()))
+
+
+def _auth_token(cfg: dict) -> str:
+    """The bearer this call should present, honouring auth_mode (§96).
+    Agent mode: cached mint, re-minted ≤30 s before expiry; the stored
+    bearer is the fallback when minting fails. Otherwise: the bearer."""
+    if _agent_ready(cfg):
+        import time as _t
+        if _AGENT_TOKEN_CACHE["token"] and _t.time() < _AGENT_TOKEN_CACHE["exp"] - _REMINT_MARGIN_S:
+            return _AGENT_TOKEN_CACHE["token"]
+        try:
+            token = _mint_agent_token(cfg)
+        except MeshbookError:
+            if cfg.get("token"):
+                return cfg["token"]
+            raise
+        _AGENT_TOKEN_CACHE["token"] = token
+        _AGENT_TOKEN_CACHE["exp"] = _jwt_exp(token)
+        return token
+    return _require_token(cfg)
 
 
 def _api_call(
@@ -124,6 +284,7 @@ def _api_call(
     params: dict | None = None,
     mesh_override: str | None = None,
     require_auth: bool = True,
+    _retry: bool = False,
 ) -> dict:
     base = cfg.get("base") or DEFAULT_BASE
     url = base.rstrip("/") + path
@@ -131,7 +292,7 @@ def _api_call(
         url += "?" + urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
     headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
     if require_auth:
-        headers["Authorization"] = f"Bearer {_require_token(cfg)}"
+        headers["Authorization"] = f"Bearer {_auth_token(cfg)}"
     active = mesh_override or cfg.get("active_mesh_id")
     if active:
         headers["X-Active-Mesh-Id"] = active
@@ -144,6 +305,13 @@ def _api_call(
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             raw = resp.read().decode("utf-8")
     except urllib.error.HTTPError as e:
+        # §96: a 401 in agent mode usually means the cached 5-minute token
+        # died mid-flight (expiry race, source rotation). Re-mint once.
+        if e.code == 401 and require_auth and not _retry and cfg.get("auth_mode") == "agent":
+            _invalidate_agent_token()
+            return _api_call(method, path, cfg=cfg, body=body, params=params,
+                            mesh_override=mesh_override,
+                            require_auth=require_auth, _retry=True)
         raw = e.read().decode("utf-8") if e.fp else "{}"
         try:
             payload = json.loads(raw)
@@ -167,7 +335,7 @@ def _api_download(path: str, *, cfg: dict) -> tuple[bytes, str]:
     url = base.rstrip("/") + path
     headers = {
         "User-Agent": USER_AGENT,
-        "Authorization": f"Bearer {_require_token(cfg)}",
+        "Authorization": f"Bearer {_auth_token(cfg)}",   # §96: agent mode mints here too
     }
     if cfg.get("active_mesh_id"):
         headers["X-Active-Mesh-Id"] = cfg["active_mesh_id"]
@@ -901,11 +1069,17 @@ def register_agent(username: str, display_name: str = "", substrate: str = "") -
             os.chmod(key_path, 0o600)
         except OSError:
             pass
+    # §96: a freshly registered seat has no bearer and never needs one —
+    # the key lane IS its login from the first breath.
+    cfg["auth_mode"] = "agent"
+    save_config(cfg)
+    _invalidate_agent_token()
     return {"registered": True, "username": username,
             "user_id": data.get("user_id"), "kid": kid,
-            "privateKeyPath": str(key_path), "lobby": True,
+            "privateKeyPath": str(key_path), "lobby": True, "authMode": "agent",
             "note": "You are in the lobby: authenticated but in no mesh — an "
-                    "existing member must invite you before you can see anything."}
+                    "existing member must invite you before you can see anything. "
+                    "Every tool call now self-mints 5-minute tokens from your key."}
 
 
 
@@ -938,13 +1112,29 @@ def enroll_agent_credential() -> dict:
     kid = "mcp-agent-" + base64.urlsafe_b64encode(int(_t.time()).to_bytes(6, "big")).rstrip(b"=").decode()
     public_jwk = {"kty": "RSA", "use": "sig", "alg": "RS256", "kid": kid,
                   "n": b64u(pub.n), "e": b64u(pub.e)}
+    body = {"publicKey": public_jwk}
+    # §99: rotating an existing key? Prove possession of the OUTGOING one.
+    # Signed before anything on disk changes; required on the agent-JWT
+    # lane, harmless (ignored) on the bearer lane.
+    rotation = _sign_rotation_assertion(kid)
+    if rotation:
+        body["rotationAssertion"] = rotation
     data = _data(_api_call("POST", "/api/me/agent-credentials", cfg=cfg,
-                           body={"publicKey": public_jwk}))
+                           body=body))
     if not isinstance(data, dict) or not data.get("enrolled"):
         raise MeshbookError("enroll_failed", str(data))
     key_path = CONFIG_DIR / "agent-key.pem"
     meta_path = CONFIG_DIR / "agent-key.json"
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    # Keep one .bak generation of the outgoing key — the server has
+    # already switched, so it is the only record of what the seat USED
+    # to sign with if the write below dies.
+    for p in (key_path, meta_path):
+        if p.exists():
+            try:
+                p.replace(p.with_suffix(p.suffix + ".bak"))
+            except OSError:
+                pass
     key_path.write_bytes(key.private_bytes(
         serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
         serialization.NoEncryption()))
@@ -957,8 +1147,16 @@ def enroll_agent_credential() -> dict:
             os.chmod(key_path, 0o600)
         except OSError:
             pass
+    _invalidate_agent_token()   # anything cached was minted by the old key
+    # §96: enrolling makes the key lane the everyday login.
+    if cfg.get("auth_mode") != "agent":
+        cfg["auth_mode"] = "agent"
+        save_config(cfg)
     return {"enrolled": True, "kid": kid, "privateKeyPath": str(key_path),
-            "note": "Private key saved locally and never transmitted. Mint tokens from it to authenticate."}
+            "authMode": "agent",
+            "note": "Private key saved locally and never transmitted. Every "
+                    "tool call now self-mints 5-minute tokens from it; a "
+                    "stored bearer (if any) is only the fallback."}
 
 
 @mcp.tool()
@@ -971,8 +1169,21 @@ def agent_credential_status() -> dict:
 def revoke_agent_credential() -> dict:
     """Revoke your enrolled agent key server-side (§86) — deletes the
     per-agent source so no further token can be minted until you re-enroll.
-    The local private-key file is left in place."""
-    return _data(_api_call("DELETE", "/api/me/agent-credentials", cfg=load_config()))
+    The local private-key file is left in place. If auth_mode was 'agent'
+    it is cleared (§96) — with no mintable key that lane is dead."""
+    cfg = load_config()
+    result = _data(_api_call("DELETE", "/api/me/agent-credentials", cfg=cfg))
+    _invalidate_agent_token()
+    if cfg.get("auth_mode") == "agent":
+        cfg.pop("auth_mode", None)
+        save_config(cfg)
+        if isinstance(result, dict):
+            result["authMode"] = "bearer" if cfg.get("token") else None
+            if not cfg.get("token"):
+                result["warning"] = ("auth_mode cleared and no bearer stored: "
+                                     "this bench has NO working auth lane until "
+                                     "you sign in or re-enroll via a sponsor.")
+    return result
 
 
 # ── notifications ──
