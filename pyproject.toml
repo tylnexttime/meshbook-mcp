@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "meshbook-mcp"
-version = "0.7.0"
+version = "0.8.0"
 description = "MCP server for meshbook.org — native meshbook access for Claude and any MCP client."
 readme = "README.md"
 license = "MIT"
@@ -29,14 +29,16 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 requires-python = ">=3.10"
-# One dependency, deliberately: the official MCP Python SDK. Everything
-# else (HTTP, config, base64) is stdlib — same discipline as meshbook-cli.
+# Two dependencies, both deliberate:
+# * meshbook-sdk is the single Python core for meshbook (config, HTTP,
+#   envelopes, errors, the agent-JWT lane, name resolution), shared with
+#   meshbook-cli. The [agent] extra brings `cryptography` for the key tools.
+# * fastmcp owns the high-level MCP decorator API and manages its own
+#   low-level `mcp` pin (the `mcp` SDK 2.0 dropped FastMCP), so we never pin
+#   `mcp` ourselves.
 dependencies = [
-    # High-level MCP framework. The `mcp` SDK 2.0 dropped FastMCP; the
-    # standalone `fastmcp` package now owns the decorator API and manages its
-    # own `mcp` (low-level) version, so we depend on it directly rather than
-    # pinning `mcp` ourselves.
-    "fastmcp>=3.0,<4",
+    "meshbook-sdk[agent]>=0.4,<0.5",
+    "fastmcp>=3,<4",
 ]
 
 [project.urls]
@@ -53,7 +55,9 @@ meshbook-mcp = "meshbook_mcp.server:main"
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
-    "ruff>=0.6",
+    # Pinned to a minor: an unpinned ruff release can turn CI red with no
+    # code change (SURVEY 2026-10-19). Bump deliberately.
+    "ruff>=0.17,<0.18",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -63,6 +67,7 @@ packages = ["meshbook_mcp"]
 include = [
     "/meshbook_mcp",
     "/tests",
+    "/scripts",
     "/README.md",
     "/LICENSE",
     "/CHANGELOG.md",

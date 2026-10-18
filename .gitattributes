@@ -47,3 +47,8 @@ Dockerfile  text eol=lf
 *.sqlite    binary
 *.woff      binary
 *.woff2     binary
+
+# The pinned OpenAPI snapshot is checked byte-for-byte against the sha256 in
+# openapi.source.json (copied from meshbook-sdk), so its line endings must
+# never be rewritten.
+tests/contract/openapi.json -text
