@@ -35,6 +35,8 @@ from meshbook_mcp._core import (
     KID_PREFIX,
     USER_AGENT,
     VERSION,
+    Overrides,
+    ToolError,
     aware_iso,
     both_given,
     canon,
@@ -53,7 +55,7 @@ from meshbook_mcp._core import (
     write_new,
 )
 
-__all__ = ["KID_PREFIX", "USER_AGENT", "VERSION", "MeshbookError", "main", "mcp"]
+__all__ = ["KID_PREFIX", "USER_AGENT", "VERSION", "MeshbookError", "ToolError", "main", "mcp"]
 
 #: Project statuses (the server's CHECK constraint).
 PROJECT_STATUSES = ("Planning", "Active", "OnHold", "Complete", "Cancelled")
@@ -76,11 +78,21 @@ mcp = FastMCP(
 )
 
 
-def tool(*, read_only: bool = False, destructive: bool = False, idempotent: bool | None = None):
-    """Register a tool with model-facing error hints and MCP annotations."""
+def tool(
+    *,
+    read_only: bool = False,
+    destructive: bool = False,
+    idempotent: bool | None = None,
+    hints: Overrides | None = None,
+):
+    """Register a tool with model-facing error hints and MCP annotations.
+
+    *hints* replaces the wording for an SDK error code in THIS tool only
+    (the tool knows its own context; the SDK message is never parsed for it).
+    """
 
     def deco(fn):
-        wrapped = with_hints(fn)
+        wrapped = with_hints(fn, hints)
         ann: dict[str, Any] = {
             "readOnlyHint": read_only,
             "destructiveHint": destructive,
@@ -178,7 +190,7 @@ def list_mesh_members(mesh: str | None = None, mesh_id: str | None = None) -> di
     Added 2026-08-20 (Wren, report A6): a seat could invite, re-role and
     remove members with no verb that could SEE the roster."""
     if mesh and mesh_id and mesh != mesh_id:
-        raise MeshbookError("bad_argument", "Pass mesh= or mesh_id=, not both.")
+        raise ToolError("bad_argument", "Pass mesh= or mesh_id=, not both.")
     c = client()
     data = c.meshes.members(mesh or mesh_id)
     members = [S.member_out(m) for m in data.get("members") or []]
@@ -370,7 +382,7 @@ def update_company(
     kwargs: dict[str, Any] = {k: v for k, v in given.items() if v is not None}
     kwargs.update({k: None for k in cleared})
     if not kwargs:
-        raise MeshbookError("bad_argument", "Nothing to update: pass a field or clear=[...].")
+        raise ToolError("bad_argument", "Nothing to update: pass a field or clear=[...].")
     return S.company_out(client().companies.update(company_id, mesh=mesh, **kwargs), full=True)
 
 
@@ -409,7 +421,7 @@ def create_lead(
     pipe = c.pipelines.default(mesh=mesh)
     stages = pipe.get("stages") or []
     if not stages:
-        raise MeshbookError("no_stage", f"Pipeline {pipe.get('name')!r} has no stages.", 404)
+        raise ToolError("no_stage", f"Pipeline {pipe.get('name')!r} has no stages.", 404)
     data = c.leads.create(
         title,
         str(pipe["id"]),
@@ -451,7 +463,7 @@ def list_projects(
     """List projects. `status`: 'active' (Planning/Active/OnHold) or
     'completed' (Complete/Cancelled); omit for all."""
     if status is not None and status.lower() not in ("active", "completed"):
-        raise MeshbookError("bad_argument", "status is 'active' or 'completed' (or omit it).")
+        raise ToolError("bad_argument", "status is 'active' or 'completed' (or omit it).")
     lim, off = page(limit, offset)
     rows = client().projects.list(
         lim, None, status.lower() if status else None, offset=off, search=search, mesh=mesh
@@ -526,7 +538,7 @@ def update_project(
     kwargs: dict[str, Any] = {k: v for k, v in given.items() if v is not None}
     kwargs.update({k: None for k in cleared})
     if not kwargs:
-        raise MeshbookError("bad_argument", "Nothing to update: pass a field or clear=[...].")
+        raise ToolError("bad_argument", "Nothing to update: pass a field or clear=[...].")
     return S.project_out(c.projects.update(project_id, mesh=mesh, **kwargs), full=True)
 
 
@@ -733,7 +745,7 @@ def _recurrence(
 ) -> dict | None:
     if repeat is None:
         if any(v is not None for v in (interval, until, count, weekdays)):
-            raise MeshbookError(
+            raise ToolError(
                 "bad_argument", "repeat_interval/until/count/weekdays need repeat= as well."
             )
         return None
@@ -831,24 +843,38 @@ def create_event(
     unless force=true."""
     c = client()
     rule = _recurrence(repeat, repeat_interval, repeat_until, repeat_count, repeat_weekdays)
-    data = c.events.create(
-        title,
-        aware_iso(start, "start"),
-        aware_iso(end, "end"),
-        description=description,
-        all_day=all_day,
-        event_type=event_type,
-        location=location,
-        meeting_url=meeting_url,
-        owner=user_ref(c, owner),
-        linked_type=linked_type,
-        linked_id=linked_id,
-        color=color,
-        attendees=attendees,
-        recurrence=rule,
-        dedupe=not force,
-        mesh=mesh,
-    )
+    start_iso = aware_iso(start, "start")
+    try:
+        data = c.events.create(
+            title,
+            start_iso,
+            aware_iso(end, "end"),
+            description=description,
+            all_day=all_day,
+            event_type=event_type,
+            location=location,
+            meeting_url=meeting_url,
+            owner=user_ref(c, owner),
+            linked_type=linked_type,
+            linked_id=linked_id,
+            color=color,
+            attendees=attendees,
+            recurrence=rule,
+            dedupe=not force,
+            mesh=mesh,
+        )
+    except MeshbookError as e:
+        if e.code != "duplicate_event":
+            raise
+        # Worded from this call's own arguments, never from the SDK's message.
+        raise ToolError(
+            e.code,
+            f"An event titled {title!r} already starts at {start_iso} in this mesh "
+            "(list_events shows it). Call create_event again with force=true to create it "
+            "anyway.",
+            e.status,
+            hint=e.hint,
+        ) from e
     return S.event_out(data, full=True)
 
 
@@ -898,7 +924,7 @@ def update_event(
         "attendees": attendees,
     }
     if "link" in cleared and (linked_type or linked_id):
-        raise MeshbookError("bad_argument", "link: pass linked_type+linked_id or clear it, not both.")
+        raise ToolError("bad_argument", "link: pass linked_type+linked_id or clear it, not both.")
     both_given(cleared - {"link"}, given)
     kwargs: dict[str, Any] = {k: v for k, v in given.items() if v is not None}
     for name in cleared:
@@ -910,7 +936,7 @@ def update_event(
         else:
             kwargs[name] = None
     if not kwargs:
-        raise MeshbookError("bad_argument", "Nothing to update: pass a field or clear=[...].")
+        raise ToolError("bad_argument", "Nothing to update: pass a field or clear=[...].")
     return S.event_out(c.events.update(event_id, mesh=mesh, **kwargs), full=True)
 
 
@@ -1095,7 +1121,15 @@ def _key_paths(c) -> tuple[str, str]:
     return str(c.agent.key_path), str(c.agent.meta_path)
 
 
-@tool()
+@tool(
+    hints={
+        "key_exists": lambda e: (
+            "A local agent key already exists, so registering a new seat here would orphan "
+            "the identity that key belongs to. Give the new seat its own MESHBOOK_CONFIG_DIR "
+            "(in this server's environment), or move the existing key away deliberately first."
+        )
+    }
+)
 def register_agent(username: str, display_name: str = "", substrate: str = "") -> dict:
     """Self-register a BRAND-NEW non-human seat on meshbook (§97): no
     invitation or existing account needed. Generates an RSA keypair LOCALLY
@@ -1205,7 +1239,7 @@ def attach_file(entity_type: str, entity_id: str, path: str, mesh: str | None = 
     dir (it holds your credentials)."""
     p = fenced(path, purpose="attach_file")
     if not p.is_file():
-        raise MeshbookError("file_not_found", f"No such file: {p}")
+        raise ToolError("file_not_found", f"No such file: {p}")
     att = client().files.attach(entity_type, entity_id, p, mesh=mesh)
     return {
         "id": att.id,

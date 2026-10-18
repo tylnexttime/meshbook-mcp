@@ -99,6 +99,23 @@ def reset_client() -> None:
 
 
 # ─── errors, written for a model ───────────────────────────────────────
+#
+# Since 0.8.1 the mapping reads only the SDK's stable machine channel: the
+# error's ``code``, its ``hint`` (meshbook-sdk 0.4.1) and its ``status``.
+# The SDK's ``message`` is for a person and its wording may change in any
+# release, so it is never parsed: either it is passed on with a sentence
+# appended, or (where it gives advice in Python, e.g. ``token=`` or
+# ``force=True``) it is replaced whole. 0.8.0 split and searched message
+# text, so an SDK rewording silently changed what a model was told.
+
+
+class ToolError(MeshbookError):
+    """An error this package raised itself, already worded for a model.
+
+    :func:`hinted` passes it through untouched. A subclass, so callers that
+    catch :class:`MeshbookError` see no difference.
+    """
+
 
 _OFFSET_HINT = (
     "Include a UTC offset, e.g. '2026-10-20T09:00:00+11:00' or '2026-10-19T22:00:00Z'. "
@@ -106,23 +123,32 @@ _OFFSET_HINT = (
 )
 
 
-def _setup_hint(_e: MeshbookError) -> str:
-    # The SDK's "Pass token=, set MESHBOOK_TOKEN…" speaks to a Python caller.
-    lead = (
-        "No meshbook credentials: no token and no usable agent key."
-        if _e.message.startswith("No API token")
-        else _e.message
-    )
+def _setup_tail() -> str:
     return (
-        f"{lead} One-time setup: `pip install meshbook-cli` then `mesh login` "
-        f"(writes {mb_config.config_path()}), or for a key-holding seat `mesh login --agent` "
-        "or the register_agent tool. On a machine shared by several minds, set "
-        "MESHBOOK_CONFIG_DIR in this server's environment."
+        f"One-time setup: `pip install meshbook-cli` then `mesh login` (writes "
+        f"{mb_config.config_path()}), or for a key-holding seat `mesh login --agent` or the "
+        "register_agent tool. On a machine shared by several minds, set MESHBOOK_CONFIG_DIR "
+        "in this server's environment."
     )
 
 
-_HINTS: dict[str, str | Callable[[MeshbookError], str]] = {
-    "not_authenticated": _setup_hint,
+def _not_authenticated(e: MeshbookError) -> str:
+    # status 0: refused locally, before the wire, for want of any credential
+    # (the SDK's wording there is advice to a Python caller). Otherwise the
+    # server (or the agent mint) rejected one, and what it said is worth keeping.
+    if e.status == 0:
+        return "No meshbook credentials: no token and no usable agent key. " + _setup_tail()
+    return f"{e.message} {_setup_tail()}"
+
+
+#: Codes whose SDK message is REPLACED (it speaks to a Python caller).
+_REPLACE: dict[str, Callable[[MeshbookError], str]] = {
+    "not_authenticated": _not_authenticated,
+    "config_unreadable": lambda e: (
+        f"The meshbook config file ({mb_config.config_path()}) exists but cannot be read as "
+        "JSON. It was left untouched because it may still hold your token: fix it by hand, or "
+        "move it aside and run `mesh login` to write a fresh one."
+    ),
     "no_active_mesh": lambda e: (
         "No active mesh. Call set_active_mesh, or pass mesh=<name or id> to this tool "
         "(list_my_meshes shows your meshes); MESHBOOK_MESH in this server's environment "
@@ -133,55 +159,93 @@ _HINTS: dict[str, str | Callable[[MeshbookError], str]] = {
         "meshbook config. Run enroll_agent_credential (force=true to rebuild an existing "
         "key) or `mesh agent enroll`, or sign in with a bearer (`mesh login`)."
     ),
-    "mesh_not_found": " list_my_meshes shows the meshes you can use.",
-    "naive_datetime": lambda e: (
-        e.message
-        if "Include a UTC offset" in e.message
-        else e.message.split(" meshbook never guesses")[0].rstrip(". ") + ". " + _OFFSET_HINT
-    ),
     "key_exists": lambda e: (
-        (
-            "A local agent key already exists, so registering a new seat here would orphan "
-            "the identity that key belongs to. Give the new seat its own MESHBOOK_CONFIG_DIR "
-            "(in this server's environment), or move the existing key away deliberately first."
-        )
-        if "registering" in e.message
-        else (
-            "A local agent key already exists, so enrolling would replace it. The server "
-            "keeps one key per seat: the old key stops working the instant the new one lands "
-            "(it is kept locally as .bak). Call again with force=true only if that is what "
-            "you mean."
-        )
+        "A local agent key already exists, so enrolling would replace it. The server keeps "
+        "one key per seat: the old key stops working the instant the new one lands (it is "
+        "kept locally as .bak). Call again with force=true only if that is what you mean."
+    ),
+    "pending_key": lambda e: (
+        "An earlier enroll or register was interrupted and left an unconfirmed agent key "
+        "beside the meshbook config. Tool calls try that key first and keep it if the server "
+        "accepted it; agent_credential_status shows whether it matches. Until it is settled "
+        "(meshbook-sdk: agent.recover_pending() or agent.discard_pending(); this server "
+        "has no tool for that yet), a new enroll or register is refused."
     ),
     "duplicate_event": lambda e: (
-        e.message.split(" Pass dedupe=False")[0]
-        + " Call create_event again with force=true to create it anyway."
+        "An event with that title already starts at that time in this mesh (list_events "
+        "shows it). Call create_event again with force=true to create it anyway."
     ),
     "missing_dependency": lambda e: (
         "The agent lane needs the `cryptography` package. Reinstall meshbook-mcp, or "
         "pip install 'meshbook-sdk[agent]'."
     ),
+    "naive_datetime": lambda e: f"A date-time argument has no UTC offset. {_OFFSET_HINT}",
+    "bad_datetime": lambda e: f"A date-time argument is not ISO 8601 with an offset. {_OFFSET_HINT}",
 }
 
+#: Codes whose SDK message is kept, with a sentence for a model appended.
+_APPEND_BY_CODE: dict[str, str] = {
+    "mesh_not_found": "list_my_meshes shows the meshes you can use.",
+    "mesh_ambiguous": "Pass the mesh id instead (list_my_meshes).",
+}
 
-def hinted(e: MeshbookError) -> MeshbookError:
-    """*e* with a model-facing hint, or *e* itself when there is none."""
-    hint = _HINTS.get(e.code)
-    if hint is None:
+#: Otherwise, by the SDK's stable hint (meshbook.errors.HINT_MEANINGS).
+_APPEND_BY_HINT: dict[str, str] = {
+    "use_before_cursor": (
+        "This tool pages with limit and before=<the oldest message's createdAt, as "
+        "nextBefore gives it>; there is no offset."
+    ),
+    "check_before_retry": (
+        "The write may already have been applied: check with a list or get tool before "
+        "calling it again."
+    ),
+    "retry_later": "Try again in a moment.",
+    "reauthenticate": (
+        "The credential was rejected: sign in again (`mesh login`) or re-enroll the agent "
+        "key, then retry."
+    ),
+    "choose_permitted_mesh": (
+        "This credential is scoped to other meshes: pass mesh= with one it may use "
+        "(list_my_meshes)."
+    ),
+    "allow_overwrite": "Pass overwrite=true to replace it, or choose another path.",
+    "use_id": "Pass the id instead.",
+    "use_username": "Pass the @username instead.",
+    "create_in_web_app": "Create it in the meshbook web app first.",
+    "fix_base_url": "Set MESHBOOK_BASE to the https apex (https://meshbook.org) or unset it.",
+}
+
+#: A per-tool replacement, by code (see ``tool(hints=...)`` in server.py).
+Overrides = dict[str, Callable[[MeshbookError], str]]
+
+
+def hinted(e: MeshbookError, overrides: Overrides | None = None) -> MeshbookError:
+    """*e* re-worded for a model, by code and hint, or *e* itself.
+
+    The result keeps *e*'s code, status and hint; only the message changes.
+    """
+    if isinstance(e, ToolError):
         return e
-    message = hint(e) if callable(hint) else e.message + hint
-    return MeshbookError(e.code, message, e.status)
+    fix = (overrides or {}).get(e.code) or _REPLACE.get(e.code)
+    if fix is not None:
+        message = fix(e)
+    else:
+        extra = _APPEND_BY_CODE.get(e.code) or _APPEND_BY_HINT.get(e.hint or "")
+        if extra is None:
+            return e
+        message = f"{e.message.rstrip()} {extra}"
+    return ToolError(e.code, message, e.status, hint=e.hint)
 
 
-def with_hints(fn: F) -> F:
-    """Re-raise any MeshbookError from *fn* with its model-facing hint."""
+def with_hints(fn: F, overrides: Overrides | None = None) -> F:
+    """Re-raise any MeshbookError from *fn* with its model-facing wording."""
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         try:
             return fn(*args, **kwargs)
         except MeshbookError as e:
-            better = hinted(e)
+            better = hinted(e, overrides)
             if better is e:
                 raise
             raise better from e
@@ -248,11 +312,11 @@ def listing(items: Iterable[Any], *, rows: Sequence[Any] | None = None, **extra:
 def page(limit: int | None, offset: int | None, *, maximum: int = 500) -> tuple[int | None, int | None]:
     """Validate limit/offset arguments; offset 0 is not sent."""
     if limit is not None and (not isinstance(limit, int) or isinstance(limit, bool) or limit < 1):
-        raise MeshbookError("bad_argument", f"limit must be a positive integer, got {limit!r}.")
+        raise ToolError("bad_argument", f"limit must be a positive integer, got {limit!r}.")
     if limit is not None and limit > maximum:
-        raise MeshbookError("bad_argument", f"limit is at most {maximum}, got {limit}.")
+        raise ToolError("bad_argument", f"limit is at most {maximum}, got {limit}.")
     if offset is not None and (not isinstance(offset, int) or isinstance(offset, bool) or offset < 0):
-        raise MeshbookError("bad_argument", f"offset must be an integer >= 0, got {offset!r}.")
+        raise ToolError("bad_argument", f"offset must be an integer >= 0, got {offset!r}.")
     return limit, (offset or None)
 
 
@@ -272,7 +336,7 @@ def require_uuid(value: str, what: str, hint: str) -> str:
     return one row must never be enough to delete something."""
     v = (value or "").strip()
     if not is_uuid(v):
-        raise MeshbookError("bad_argument", f"{what} must be an id (UUID), got {value!r}. {hint}")
+        raise ToolError("bad_argument", f"{what} must be an id (UUID), got {value!r}. {hint}")
     return v
 
 
@@ -285,16 +349,16 @@ def aware_iso(value: str, field: str) -> str:
     """
     text = str(value or "").strip()
     if not text:
-        raise MeshbookError("bad_argument", f"{field} is empty.")
+        raise ToolError("bad_argument", f"{field} is empty.")
     parse = text[:-1] + "+00:00" if text[-1] in "Zz" else text
     try:
         dt = _dt.datetime.fromisoformat(parse)
     except ValueError:
-        raise MeshbookError(
+        raise ToolError(
             "bad_datetime", f"{field}={value!r} is not an ISO 8601 date-time. {_OFFSET_HINT}"
         ) from None
     if dt.tzinfo is None or dt.utcoffset() is None:
-        raise MeshbookError("naive_datetime", f"{field}={value!r} has no UTC offset. {_OFFSET_HINT}")
+        raise ToolError("naive_datetime", f"{field}={value!r} has no UTC offset. {_OFFSET_HINT}")
     return dt.isoformat()
 
 
@@ -304,11 +368,11 @@ _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 def iso_date(value: str, field: str) -> str:
     text = str(value or "").strip()
     if not _DATE.fullmatch(text):
-        raise MeshbookError("bad_date", f"{field} must be a date YYYY-MM-DD, got {value!r}.")
+        raise ToolError("bad_date", f"{field} must be a date YYYY-MM-DD, got {value!r}.")
     try:
         return _dt.date.fromisoformat(text).isoformat()
     except ValueError:
-        raise MeshbookError("bad_date", f"{field}={value!r} is not a real date.") from None
+        raise ToolError("bad_date", f"{field}={value!r} is not a real date.") from None
 
 
 def due_value(value: str) -> str:
@@ -329,7 +393,7 @@ def canon(value: str | None, choices: Sequence[str], field: str) -> str | None:
 
     hit = {fold(c): c for c in choices}.get(fold(str(value)))
     if hit is None:
-        raise MeshbookError(
+        raise ToolError(
             "bad_argument", f"{field} must be one of {', '.join(choices)}, got {value!r}."
         )
     return hit
@@ -341,7 +405,7 @@ def clear_set(clear: Sequence[str] | None, allowed: Sequence[str]) -> set[str]:
     for name in clear or []:
         key = str(name).strip().lower()
         if key not in allowed:
-            raise MeshbookError(
+            raise ToolError(
                 "bad_argument",
                 f"clear: {name!r} cannot be cleared here. Clearable: {', '.join(allowed)}.",
             )
@@ -352,7 +416,7 @@ def clear_set(clear: Sequence[str] | None, allowed: Sequence[str]) -> set[str]:
 def both_given(cleared: set[str], given: dict[str, Any]) -> None:
     clash = sorted(k for k in cleared if given.get(k) is not None)
     if clash:
-        raise MeshbookError(
+        raise ToolError(
             "bad_argument", f"{', '.join(clash)}: pass a new value or clear it, not both."
         )
 
@@ -392,14 +456,14 @@ def fenced(path_str: str, *, purpose: str) -> Path:
     """
     text = str(path_str or "").strip()
     if not text:
-        raise MeshbookError("bad_argument", f"{purpose}: path is empty.")
+        raise ToolError("bad_argument", f"{purpose}: path is empty.")
     p = Path(text).expanduser()
     if not p.is_absolute():
         p = Path.cwd() / p
     resolved = p.resolve()
     cfg_dir = mb_config.config_dir().expanduser().resolve()
     if _within(resolved, cfg_dir):
-        raise MeshbookError(
+        raise ToolError(
             "path_not_allowed",
             f"{purpose}: {resolved} is inside the meshbook config dir ({cfg_dir}), which holds "
             "your token and agent key. The file tools never touch it.",
@@ -409,7 +473,7 @@ def fenced(path_str: str, *, purpose: str) -> Path:
     roots = [Path.home().resolve(), Path.cwd().resolve()]
     if any(_within(resolved, r) for r in roots):
         return resolved
-    raise MeshbookError(
+    raise ToolError(
         "path_not_allowed",
         f"{purpose}: {resolved} is outside your home directory and the current directory. "
         f"Use a path under one of those, or set {ALLOW_ANY_PATH_ENV}=1 in this server's "
@@ -425,9 +489,9 @@ safe_filename = _sdk_safe_filename
 def refuse_existing(target: Path, *, overwrite: bool) -> None:
     """``file_exists`` for a directory, or for an existing file unless *overwrite*."""
     if target.is_dir():
-        raise MeshbookError("file_exists", f"{target} is a directory.")
+        raise ToolError("file_exists", f"{target} is a directory.")
     if os.path.lexists(target) and not overwrite:
-        raise MeshbookError(
+        raise ToolError(
             "file_exists",
             f"{target} already exists. Pass overwrite=true to replace it, or choose another path.",
         )
@@ -447,7 +511,7 @@ def download_target(out: Path, filename: str, *, purpose: str) -> Path:
         return out
     target = fenced(str(out / filename), purpose=purpose)
     if target.parent != out:
-        raise MeshbookError(
+        raise ToolError(
             "unsafe_path",
             f"{purpose}: {out / filename} resolves to {target}, outside {out} (a link?). "
             "Choose another directory or give a full file path in out_path.",
@@ -475,14 +539,14 @@ def write_new(target: Path, content: bytes, *, overwrite: bool) -> None:
         try:
             os.link(tmp, target)
         except FileExistsError:
-            raise MeshbookError(
+            raise ToolError(
                 "file_exists",
                 f"{target} already exists. Pass overwrite=true to replace it.",
             ) from None
         except OSError:
             # No hard links here (FAT, some network shares): best effort.
             if target.exists():
-                raise MeshbookError(
+                raise ToolError(
                     "file_exists", f"{target} already exists. Pass overwrite=true to replace it."
                 ) from None
             os.replace(tmp, target)
@@ -504,6 +568,8 @@ __all__ = [
     "download_target",
     "due_value",
     "fenced",
+    "Overrides",
+    "ToolError",
     "hinted",
     "is_uuid",
     "iso_date",

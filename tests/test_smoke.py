@@ -125,9 +125,14 @@ def test_config_round_trip(api):
     assert cfg["schema_version"] == 1
 
 
-def test_corrupt_config_returns_empty(router):
-    """A corrupt config reads as empty: a clean not-signed-in error, never a
-    JSONDecodeError traceback."""
+def test_corrupt_config_is_reported_and_left_alone(router):
+    """A corrupt config is a clean error, never a JSONDecodeError traceback.
+
+    Until 0.8.0 it read as empty and the model was told "no credentials, run
+    mesh login", the advice that overwrote a token still in the broken file
+    (SDK critique C-40). With meshbook-sdk 0.4.1 the code is
+    config_unreadable; the wording is the MCP's (the SDK's names a Python
+    function), and the file is never touched."""
     from meshbook import config as mb_config
 
     p = mb_config.config_path()
@@ -135,7 +140,11 @@ def test_corrupt_config_returns_empty(router):
     p.write_text("{ not valid json", encoding="utf-8")
     with pytest.raises(server.MeshbookError) as exc:
         server.list_contacts()
-    assert exc.value.code == "not_authenticated"
+    assert exc.value.code == "config_unreadable" and exc.value.hint == "fix_config"
+    assert str(p) in exc.value.message and "mesh login" in exc.value.message
+    assert "quarantine_config()" not in exc.value.message
+    assert p.read_text(encoding="utf-8") == "{ not valid json"
+    assert not router.requests
 
 
 # ─── wire shapes ───────────────────────────────────────────────────────
