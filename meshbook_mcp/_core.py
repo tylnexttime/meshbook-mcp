@@ -215,6 +215,13 @@ _APPEND_BY_HINT: dict[str, str] = {
     "use_username": "Pass the @username instead.",
     "create_in_web_app": "Create it in the meshbook web app first.",
     "fix_base_url": "Set MESHBOOK_BASE to the https apex (https://meshbook.org) or unset it.",
+    # meshbook-sdk 0.4.2: a registry route answered with FastAPI's bare 404
+    # (or a 405). The code stays http_error and the message "Not Found".
+    "server_too_old": (
+        "The meshbook server does not have this route: it is older than this client, so "
+        "this is not a missing record. The tool cannot work until the server is updated; "
+        "say so rather than retrying."
+    ),
 }
 
 #: A per-tool replacement, by code (see ``tool(hints=...)`` in server.py).

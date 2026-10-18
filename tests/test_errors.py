@@ -85,3 +85,27 @@ def test_no_message_text_is_parsed_in_the_mapping():
     )
     for needle in (".startswith(", ".split(", " in e.message", "e.message.find"):
         assert needle not in src
+
+
+def test_server_too_old_tells_the_model_the_server_lacks_the_route(api):
+    """meshbook-sdk 0.4.2 marks a registry route answered with FastAPI's bare
+    404 as server_too_old (the code stays http_error). 0.8.1 passed the bare
+    "Not Found" on, which reads like a missing record."""
+    api.add("GET", "/api/contacts", Err(404, {"detail": "Not Found"}))
+    with pytest.raises(server.MeshbookError) as exc:
+        server.list_contacts()
+    e = exc.value
+    assert e.code == "http_error" and e.hint == "server_too_old" and e.status == 404
+    assert e.message.startswith("Not Found")
+    assert "older than this client" in e.message and "not a missing record" in e.message
+
+
+def test_a_routes_own_404_is_not_server_too_old(api):
+    from meshbook_mcp import _core as core
+
+    api.add("GET", "/api/contacts/" + "d" * 8 + "-0000-0000-0000-000000000001",
+            Err(404, {"error": {"code": "not_found", "message": "Contact not found."}}))
+    with pytest.raises(server.MeshbookError) as exc:
+        server.get_contact("dddddddd-0000-0000-0000-000000000001")
+    assert exc.value.code == "not_found" and exc.value.hint != "server_too_old"
+    assert core._APPEND_BY_HINT["server_too_old"] not in exc.value.message

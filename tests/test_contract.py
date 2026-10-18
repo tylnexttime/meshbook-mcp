@@ -132,4 +132,10 @@ def test_ci_runs_the_contract_check_and_guards_the_tag():
     assert 'test "$TAG" = "$VER"' in ci
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert '"ruff>=0.17,<0.18"' in pyproject
-    assert '"meshbook-sdk[agent]>=0.4.1,<0.5"' in pyproject and '"fastmcp>=3,<4"' in pyproject
+    floor = '"meshbook-sdk[agent]>=0.4.2,<0.5"'
+    assert floor in pyproject and '"fastmcp>=3,<4"' in pyproject
+    # 0.4.2: the recurrence tzid, the server_too_old hint. CI's default spec and
+    # the README's dev install say the same floor.
+    assert "'meshbook-sdk[agent]>=0.4.2,<0.5'" in ci
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "until meshbook-sdk 0.4.2 is on PyPI" in readme
