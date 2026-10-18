@@ -79,6 +79,20 @@ def test_list_tasks_filters_sort_and_paging(api):
     assert {"priority", "dueDate", "dueAt"} <= set(out["items"][0])
 
 
+def test_me_costs_one_api_me_per_client(api):
+    """'me' resolves through client.me_id() (SDK 0.4.1), cached on the
+    process's client: 0.8.0 called whoami() and so GET /api/me on every
+    'me', and list_my_tasks fetched it again."""
+    api.add("GET", "/api/me", ok({"user": {"id": U1}}))
+    api.add("GET", "/api/tasks", ok_list([], total=0, limit=50))
+    api.add("GET", "/api/users", USERS)
+    server.list_tasks(assignee="me")
+    server.list_tasks(assignee="@me")
+    server.list_my_tasks()
+    assert len(api.calls("GET", "/api/me")) == 1
+    assert all(api.query(r)["assigneeId"] == U1 for r in api.calls("GET", "/api/tasks"))
+
+
 def test_list_tasks_rejects_unknown_sort(api):
     with pytest.raises(server.MeshbookError) as exc:
         server.list_tasks(sort="status")

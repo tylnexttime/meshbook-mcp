@@ -451,7 +451,7 @@ def user_ref(c: Client, ref: str | None) -> str | None:
     if ref is None:
         return None
     if ref.strip().lower() in ("me", "@me"):
-        return c.whoami().id
+        return c.me_id()
     return ref
 
 
