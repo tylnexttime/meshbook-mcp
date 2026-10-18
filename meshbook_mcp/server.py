@@ -586,11 +586,6 @@ def delete_project(project_id: str, mesh: str | None = None) -> dict:
 # ── tasks ──
 
 
-def _task_rows(rows: ItemList, *, open_only: bool) -> tuple[list[dict], int]:
-    items = [t for t in rows if not (open_only and t.get("status") in ("Done", "Cancelled"))]
-    return [S.task_out(t) for t in items], len(rows) - len(items)
-
-
 @tool(read_only=True)
 def list_tasks(
     project: str | None = None,
@@ -618,8 +613,7 @@ def list_tasks(
         sort=sort,
         mesh=mesh,
     )
-    items, _ = _task_rows(rows, open_only=False)
-    return listing(items, rows=rows)
+    return listing([S.task_out(t) for t in rows], rows=rows)
 
 
 @tool(read_only=True)
@@ -631,15 +625,20 @@ def list_my_tasks(
     mesh: str | None = None,
 ) -> dict:
     """Your own tasks, with due dates where set. By default Done/Cancelled
-    tasks are hidden from the page (`total` still counts every status; see
-    `closedHidden`). `sort`: due, priority, created, title ('-' reverses)."""
+    tasks are left out of the page (`closedHidden` says how many), so a page
+    can be short while `truncated` is true: keep paging with
+    offset=nextOffset. `total` is then null (the open count is not known
+    without reading every page). `sort`: due, priority, created, title
+    ('-' reverses)."""
     lim, off = page(limit, offset)
-    rows = client().tasks.list_mine(limit=lim, offset=off, sort=sort, mesh=mesh)
-    items, hidden = _task_rows(rows, open_only=not include_closed)
+    rows = client().tasks.list_mine(
+        limit=lim, offset=off, sort=sort, open_only=not include_closed, mesh=mesh
+    )
     extra: dict[str, Any] = {}
     if not include_closed:
-        extra["closedHidden"] = hidden
-    return listing(items, rows=rows, **extra)
+        server_rows = rows.meta.get("server_rows", len(rows))
+        extra["closedHidden"] = server_rows - len(rows)
+    return listing([S.task_out(t) for t in rows], rows=rows, **extra)
 
 
 @tool(read_only=True)
@@ -1405,9 +1404,9 @@ def _due_by_end_of_today(task: dict, now: _dt.datetime) -> bool:
 def resource_my_tasks_today() -> str:
     """Your open tasks due today (this machine's date) or overdue, plus open
     undated tasks listed separately."""
-    rows = client().tasks.list_mine(limit=200)
+    rows = client().tasks.list_mine(limit=200, open_only=True)
     now = _now()
-    open_tasks = [t for t in rows if t.get("status") not in ("Done", "Cancelled")]
+    open_tasks = list(rows)
     due = [S.task_out(t) for t in open_tasks if _due_by_end_of_today(t, now)]
     undated = [S.task_out(t) for t in open_tasks if not t.get("dueDate") and not t.get("dueAt")]
     page_info = listing([], rows=rows)

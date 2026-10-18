@@ -63,9 +63,32 @@ def test_listing_helper_on_item_lists():
     assert out["total"] is None and out["truncated"] is True     # full page, total unknown
     rows = ItemList([1], total=None, limit=5)
     assert server._listing(rows, rows=rows)["truncated"] is False
-    rows = ItemList([1, 2, 3], total=9, limit=3, offset=0, meta={"client_paginated": True})
+    rows = ItemList([1, 2, 3], total=9, limit=3, offset=0, meta={"client_paginated": True},
+                    total_exact=True)       # how the SDK builds a page it cut itself
     out = server._listing(rows, rows=rows)
     assert out["total"] == 9 and out["nextOffset"] == 3
+
+
+def test_exactness_is_the_sdks_call_not_a_guess_from_meta_keys():
+    """0.8.0 trusted a total whenever 'offset' (or 'limit', or
+    'client_paginated') was in the meta. The SDK (0.4.1) says whether a
+    total is exact; the listing reports it only then."""
+    guessy = ItemList([1, 2, 3], total=3, limit=3, offset=0, meta={"offset": 0})
+    assert guessy.total_exact is False
+    out = server._listing(guessy, rows=guessy)
+    assert out["total"] is None and out["truncated"] is True and out["nextOffset"] == 3
+    exact = ItemList([1, 2, 3], total=3, limit=3, offset=0, meta={"offset": 0, "limit": 3})
+    out = server._listing(exact, rows=exact)
+    assert out["total"] == 3 and out["truncated"] is False and "nextOffset" not in out
+
+
+def test_next_offset_follows_the_servers_rows_after_a_client_side_filter():
+    """A page the SDK filtered (tasks.list_mine(open_only=True)) is shorter
+    than what the server sent; the next page starts after the SERVER's rows."""
+    rows = ItemList([{"id": "a"}], total=None, limit=3, offset=6,
+                    meta={"server_rows": 3, "server_total": 20})
+    out = server._listing(list(rows), rows=rows)
+    assert out["count"] == 1 and out["truncated"] is True and out["nextOffset"] == 9
 
 
 @pytest.mark.parametrize("limit,offset", [(0, 0), (-1, 0), (501, 0), (10, -5)])
@@ -160,8 +183,11 @@ def test_the_client_is_reused_between_calls(api):
 
 
 def test_list_my_meshes_marks_active(api):
+    """/api/meshes answers the server's unpaged ok_list() (total = pageSize =
+    the row count), which the SDK cannot tell from a page-length total, so
+    total_exact is False and total is null; nothing says there is more."""
     out = server.list_my_meshes()
-    assert out["count"] == 2 and out["total"] == 2
+    assert out["count"] == 2 and out["total"] is None and out["truncated"] is False
     assert [m["active"] for m in out["items"]] == [True, False]
 
 

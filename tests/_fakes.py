@@ -60,11 +60,24 @@ def ok(data: Any) -> dict[str, Any]:
 
 
 def ok_list(items: list[Any], total: int | None = None, **extra: Any) -> dict[str, Any]:
-    """The 2026-10-19 server's list envelope: TRUE total plus limit/offset."""
+    """The 2026-10-19 server's ok_page envelope: TRUE total plus limit AND
+    offset (meshbook app/services/responses.py ok_page always sends both).
+
+    0.8.0's fake sent offset without limit, a shape the server never emits,
+    and the old listing trusted it on "offset" alone.
+    """
     data = {"items": items, "total": len(items) if total is None else total}
-    data.setdefault("offset", extra.pop("offset", 0))
+    data["offset"] = extra.pop("offset", 0)
+    data["limit"] = extra.pop("limit", max(50, len(items)))
     data.update(extra)
     return {"ok": True, "data": data}
+
+
+def unpaged_list(items: list[Any]) -> dict[str, Any]:
+    """The server's ok_list() default for an unpaged route (meshes, channels,
+    exports): the whole set as one page, total = pageSize = len(items)."""
+    return {"ok": True, "data": {"items": items, "total": len(items), "page": 1,
+                                 "pageSize": len(items)}}
 
 
 def old_ok_list(items: list[Any], page_size: int = 50) -> dict[str, Any]:
@@ -128,5 +141,5 @@ class Router:
 
 
 def meshes_payload(*rows: tuple[str, str]) -> dict[str, Any]:
-    return ok_list([{"id": i, "name": n, "meshType": "family", "memberRole": "member"}
-                    for i, n in rows])
+    return unpaged_list([{"id": i, "name": n, "meshType": "family", "memberRole": "member"}
+                         for i, n in rows])

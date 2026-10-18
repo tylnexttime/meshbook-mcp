@@ -106,9 +106,24 @@ def test_list_my_tasks_hides_closed_but_says_so(api):
     api.add("GET", "/api/tasks", ok_list(rows, total=3, limit=100))
     out = server.list_my_tasks()
     assert [t["id"] for t in out["items"]] == ["a"]
-    assert out["count"] == 1 and out["total"] == 3 and out["closedHidden"] == 2
+    # total is null since 0.8.1: the server's 3 counted closed tasks too, and
+    # the open count is not known without reading every page (SDK open_only).
+    assert out["count"] == 1 and out["total"] is None and out["closedHidden"] == 2
     assert out["truncated"] is False
-    assert server.list_my_tasks(include_closed=True)["count"] == 3
+    everything = server.list_my_tasks(include_closed=True)
+    assert everything["count"] == 3 and everything["total"] == 3
+
+
+def test_list_my_tasks_pages_on_after_a_short_filtered_page(api):
+    """A full server page that is mostly closed tasks: the model sees one
+    task, but truncated + nextOffset (after the server's 3 rows) say more."""
+    api.add("GET", "/api/me", ok({"user": {"id": U1}}))
+    rows = [dict(TASK, id="a"), dict(TASK, id="b", status="Done"),
+            dict(TASK, id="c", status="Done")]
+    api.add("GET", "/api/tasks", ok_list(rows, total=10, limit=3, offset=0))
+    out = server.list_my_tasks(limit=3)
+    assert out["count"] == 1 and out["closedHidden"] == 2
+    assert out["truncated"] is True and out["nextOffset"] == 3 and out["total"] is None
 
 
 def test_get_and_delete_task(api):

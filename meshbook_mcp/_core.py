@@ -267,8 +267,8 @@ def listing(
     """The one envelope every list-returning tool answers with.
 
     ``count`` is what is in ``items``; ``total`` is the server's TRUE total
-    when the server reports one it can be trusted with (``None`` when it
-    only told us the page length); ``truncated`` says whether there is more
+    when the SDK says it is one (``ItemList.total_exact``), else ``None``;
+    ``truncated`` says whether there is more
     than this page, and where to continue:
 
     * ``paging="offset"``: ``nextOffset`` (the tool takes ``offset=``);
@@ -293,21 +293,22 @@ def listing(
         meta = src.meta
         offset = src.offset or 0
         limit = src.limit if src.limit is not None else meta.get("pageSize")
-        total = src.total
-        # The 2026-10-19 server sends limit/offset beside a TRUE total; an
-        # older one sends only page/pageSize and reports the PAGE LENGTH as
-        # total. The SDK's client-side cut also yields a real total.
-        trusted = total is not None and (
-            "offset" in meta or "limit" in meta or "client_paginated" in meta or limit is None
-        )
-        if total is None:
-            more = src.has_more if limit is not None else False
-            total = page_len if limit is None else None
-        elif trusted:
-            more = total > offset + page_len
+        # Whether the server's total is the full count is the SDK's call
+        # (ItemList.total_exact, meshbook-sdk 0.4.1): true for the
+        # 2026-10-19 ok_page shape and for a page the SDK cut itself. 0.8.0
+        # guessed from which meta keys were present ("offset" alone was
+        # enough), so a page-length total could be reported as the total.
+        if src.total_exact:
+            total = src.total
+            more = total > src.next_offset
+        elif src.total is None and limit is None:
+            # A bare list for a call that asked for no paging: these rows
+            # are all there is, and there is no server figure to distrust.
+            total, more = page_len, False
         else:
-            more = total > offset + page_len or (limit is not None and page_len >= limit)
             total = None
+            more = src.has_more
+        next_offset = src.next_offset  # the rows the SERVER sent, not len(shown)
         if isinstance(meta.get("hasMore"), bool):
             # The chat and channel routes say it outright (they peek one row
             # past the page); that beats any arithmetic on a page length.
@@ -315,6 +316,7 @@ def listing(
         truncated = bool(more or src.truncated)
     else:
         offset, limit, total, more, truncated = 0, None, page_len, False, False
+        next_offset = page_len
     out: dict[str, Any] = {"count": len(shown), "total": total, "truncated": truncated}
     if limit is not None:
         out["limit"] = limit
@@ -322,7 +324,7 @@ def listing(
         if offset:
             out["offset"] = offset
         if more:
-            out["nextOffset"] = offset + page_len
+            out["nextOffset"] = next_offset
     elif paging == "before":
         if more and next_before:
             out["nextBefore"] = next_before
