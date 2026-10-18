@@ -207,3 +207,36 @@ def test_revoke_clears_agent_mode(bench):
     assert result["authMode"] == "bearer"
     assert "auth_mode" not in mb_config.load_config()
     assert (bench["dir"] / "agent-key.pem").exists()                # local key left in place
+
+
+# ─── 0.8.0: the SDK refuses a silent key replacement ─────────────────
+
+def test_enroll_without_force_refuses_to_replace_a_key(bench):
+    write_config(token="mb_token_x")
+    with pytest.raises(server.MeshbookError) as exc:
+        server.enroll_agent_credential()
+    assert exc.value.code == "key_exists"
+    assert "force=true" in exc.value.message
+    assert not bench["router"].calls("POST", "/api/me/agent-credentials")
+    meta = json.loads((bench["dir"] / "agent-key.json").read_text(encoding="utf-8"))
+    assert meta["kid"] == "kid-old"                                   # untouched
+
+
+def test_register_over_an_existing_key_points_at_config_dir_not_force(bench):
+    with pytest.raises(server.MeshbookError) as exc:
+        server.register_agent("second_seat")
+    assert exc.value.code == "key_exists"
+    assert "MESHBOOK_CONFIG_DIR" in exc.value.message and "force" not in exc.value.message
+    assert not bench["router"].calls("POST", "/api/register/agent")
+
+
+def test_a_failed_mint_never_quotes_the_token_endpoint_body(bench):
+    """0.7 put the first 200 chars of the token endpoint's error body into
+    the tool error. That endpoint's bodies can carry credentials; the SDK
+    reports only their shape."""
+    write_config(auth_mode="agent", active_mesh_id=MESH)
+    bench["router"].add("POST", TOKEN_PATH,
+                        Err(400, {"error": "invalid_client", "id_token": "eyJSECRETSECRET"}))
+    with pytest.raises(server.MeshbookError) as exc:
+        server.list_contacts()
+    assert "SECRET" not in str(exc.value)

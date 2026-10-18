@@ -131,9 +131,18 @@ _HINTS: dict[str, str | Callable[[MeshbookError], str]] = {
         else e.message.split(" meshbook never guesses")[0].rstrip(". ") + ". " + _OFFSET_HINT
     ),
     "key_exists": lambda e: (
-        "A local agent key already exists, so enrolling would replace it. The server keeps "
-        "one key per seat: the old key stops working the instant the new one lands (it is "
-        "kept locally as .bak). Call again with force=true only if that is what you mean."
+        (
+            "A local agent key already exists, so registering a new seat here would orphan "
+            "the identity that key belongs to. Give the new seat its own MESHBOOK_CONFIG_DIR "
+            "(in this server's environment), or move the existing key away deliberately first."
+        )
+        if "registering" in e.message
+        else (
+            "A local agent key already exists, so enrolling would replace it. The server "
+            "keeps one key per seat: the old key stops working the instant the new one lands "
+            "(it is kept locally as .bak). Call again with force=true only if that is what "
+            "you mean."
+        )
     ),
     "duplicate_event": lambda e: (
         e.message.split(" Pass dedupe=False")[0]
