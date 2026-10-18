@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
-import os
+import warnings
 from typing import Any
 
 from fastmcp import FastMCP
@@ -150,12 +150,17 @@ def set_active_mesh(mesh_id: str) -> dict:
     A refusal leaves the config untouched.
     """
     c = client()
-    found = c.meshes.use(mesh_id, persist=True)
+    with warnings.catch_warnings():
+        # The SDK (0.4.1) also warns when MESHBOOK_MESH overrides the saved
+        # mesh; this tool says so in its answer (env_override), and a
+        # warning on a stdio server's stderr reaches nobody useful.
+        warnings.simplefilter("ignore", UserWarning)
+        found = c.meshes.use(mesh_id, persist=True)
     out: dict[str, Any] = {"activeMeshId": found.id, "name": found.name}
-    if (os.environ.get("MESHBOOK_MESH") or "").strip():
+    if found.env_override:
         out["note"] = (
-            "Saved, but MESHBOOK_MESH is set in this server's environment and wins over the "
-            "saved mesh for every call this process makes."
+            f"Saved, but MESHBOOK_MESH={found.env_override!r} is set in this server's "
+            "environment and wins over the saved mesh for every call this process makes."
         )
     return out
 

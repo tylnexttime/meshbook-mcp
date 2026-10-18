@@ -125,9 +125,25 @@ def test_unknown_mesh_name_is_clean(api):
 def test_set_active_mesh_warns_when_env_pins_the_mesh(api, monkeypatch):
     monkeypatch.setenv("MESHBOOK_MESH", "Tyl Mesh")
     api.add("POST", "/api/meshes/active", ok({}))
-    out = server.set_active_mesh("Second Mesh")
-    assert "MESHBOOK_MESH" in out["note"]
+    import warnings
+
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        out = server.set_active_mesh("Second Mesh")
+    assert "MESHBOOK_MESH='Tyl Mesh'" in out["note"]
     assert mb_config.load_config()["active_mesh_id"] == MESH2
+    # SDK 0.4.1 warns too; on a stdio server that only litters stderr (0.8.0 let it out)
+    assert [w for w in seen if issubclass(w.category, UserWarning)] == []
+
+
+def test_set_active_mesh_no_note_when_env_names_the_same_mesh(api, monkeypatch):
+    """0.8.0 added the override note whenever MESHBOOK_MESH was set at all,
+    even to the mesh just saved; the SDK's env_override is set only when the
+    variable names a different mesh."""
+    monkeypatch.setenv("MESHBOOK_MESH", "second mesh")
+    api.add("POST", "/api/meshes/active", ok({}))
+    out = server.set_active_mesh("Second Mesh")
+    assert "note" not in out and out["activeMeshId"] == MESH2
 
 
 def test_set_active_mesh_refusal_changes_nothing(api):
