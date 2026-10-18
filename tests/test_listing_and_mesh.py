@@ -163,3 +163,32 @@ def test_list_my_meshes_marks_active(api):
     out = server.list_my_meshes()
     assert out["count"] == 2 and out["total"] == 2
     assert [m["active"] for m in out["items"]] == [True, False]
+
+
+def test_meshbook_token_env_beats_the_config(api, monkeypatch):
+    """0.7 ignored MESHBOOK_TOKEN entirely (SURVEY §4)."""
+    monkeypatch.setenv("MESHBOOK_TOKEN", "mb_token_env")
+    api.add("GET", "/api/contacts", ok_list([]))
+    server.list_contacts()
+    assert api.last.get_header("Authorization") == "Bearer mb_token_env"
+
+
+def test_a_503_on_a_read_is_retried_honouring_retry_after(api):
+    """0.7 had no retry at all; reads now ride the SDK's 429/503 policy."""
+    from tests._fakes import Err
+
+    api.add("GET", "/api/contacts",
+            Err(503, {"error": {"code": "busy", "message": "busy"}}, {"Retry-After": "2"}),
+            ok_list([{"id": "c"}]))
+    assert server.list_contacts()["count"] == 1
+    assert api.sleeps == [2.0]
+
+
+def test_a_write_is_never_retried(api):
+    from tests._fakes import Err
+
+    api.add("POST", "/api/contacts",
+            Err(503, {"error": {"code": "busy", "message": "busy"}}, {"Retry-After": "1"}))
+    with pytest.raises(server.MeshbookError) as exc:
+        server.create_contact("Ada")
+    assert exc.value.status == 503 and len(api.calls("POST", "/api/contacts")) == 1

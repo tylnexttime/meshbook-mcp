@@ -88,12 +88,13 @@ old key server-side the instant the new one lands).
 - `meshbook://my-tasks-today` judged "today" by the UTC date (in Sydney
   before 11:00 a task due today was not listed); it uses this machine's
   date now.
-- `MESHBOOK_BASE` was read once at import and a config `base` beat it.
+- `MESHBOOK_BASE` was read once at import and a config `base` beat it;
+  `MESHBOOK_TOKEN` was ignored. Both now follow the shared precedence.
 - Config was read in the locale encoding.
 
 ### Tests and tooling
 
-- Tests: 42 → 147. The 42 baseline tests were ported from a monkeypatched
+- Tests: 42 → 150. The 42 baseline tests were ported from a monkeypatched
   `_api_call` to a fake transport under the SDK, keeping their names and
   assertions; one (`test_no_tool_returns_a_bare_list`) was rewritten
   because its source regex would have matched nothing after the port and
