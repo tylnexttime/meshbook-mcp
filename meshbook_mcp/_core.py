@@ -256,13 +256,27 @@ def with_hints(fn: F, overrides: Overrides | None = None) -> F:
 # ─── listings ──────────────────────────────────────────────────────────
 
 
-def listing(items: Iterable[Any], *, rows: Sequence[Any] | None = None, **extra: Any) -> dict:
+def listing(
+    items: Iterable[Any],
+    *,
+    rows: Sequence[Any] | None = None,
+    paging: str = "offset",
+    next_before: str | None = None,
+    **extra: Any,
+) -> dict:
     """The one envelope every list-returning tool answers with.
 
     ``count`` is what is in ``items``; ``total`` is the server's TRUE total
     when the server reports one it can be trusted with (``None`` when it
     only told us the page length); ``truncated`` says whether there is more
-    than this page, and ``nextOffset`` where to continue.
+    than this page, and where to continue:
+
+    * ``paging="offset"``: ``nextOffset`` (the tool takes ``offset=``);
+    * ``paging="before"``: ``nextBefore`` = *next_before*, a cursor (chat,
+      channel and DM reads: their routes ignore an offset, and since
+      meshbook-sdk 0.4.1 the SDK refuses one, so 0.8.0's ``nextOffset``
+      there pointed at an argument that could never work);
+    * ``paging="none"``: neither (``search_chat`` takes ``limit`` only).
 
     B6 (Wren, 2026-08-20) made ``count`` explicit because a bare ``[]``
     serialises to nothing. It was the page length, though, so a model with
@@ -294,16 +308,26 @@ def listing(items: Iterable[Any], *, rows: Sequence[Any] | None = None, **extra:
         else:
             more = total > offset + page_len or (limit is not None and page_len >= limit)
             total = None
+        if isinstance(meta.get("hasMore"), bool):
+            # The chat and channel routes say it outright (they peek one row
+            # past the page); that beats any arithmetic on a page length.
+            more = meta["hasMore"]
         truncated = bool(more or src.truncated)
     else:
         offset, limit, total, more, truncated = 0, None, page_len, False, False
     out: dict[str, Any] = {"count": len(shown), "total": total, "truncated": truncated}
     if limit is not None:
         out["limit"] = limit
-    if offset:
-        out["offset"] = offset
-    if more:
-        out["nextOffset"] = offset + page_len
+    if paging == "offset":
+        if offset:
+            out["offset"] = offset
+        if more:
+            out["nextOffset"] = offset + page_len
+    elif paging == "before":
+        if more and next_before:
+            out["nextBefore"] = next_before
+    elif paging != "none":
+        raise ValueError(f"paging is 'offset', 'before' or 'none', not {paging!r}")
     out["items"] = shown
     out.update(extra)
     return out

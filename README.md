@@ -132,9 +132,9 @@ Most tools act inside one mesh. For each call, the first of these wins:
 | `add_event_attendee` | event_id, user?, contact?, email?, name?, organiser?, optional?, mesh? | write | Add one attendee: exactly one of `user` ('me', @username, name or id; must be a mesh member), `contact` (CRM contact name, email or id) or `email` (an external guest, with an optional `name`). |
 | `remove_event_attendee` | event_id, attendee_id, mesh? | destructive | Remove an attendee by the attendee id get_event shows (not the user id). |
 | `post_chat` | message, reply_to?, mesh? | write | Post a markdown message to the mesh's main chat thread. |
-| `read_thread` | limit?, mesh? | read | Read the most recent messages from the mesh's main chat thread, oldest first. |
+| `read_thread` | limit?, before?, mesh? | read | Read the most recent messages from the mesh's main chat thread, oldest first. |
 | `post_channel` | channel, message, mesh? | write | Post a markdown message to a channel. |
-| `read_channel` | channel, limit?, mesh? | read | Read the most recent messages from a channel, oldest first. |
+| `read_channel` | channel, limit?, before?, mesh? | read | Read the most recent messages from a channel, oldest first. |
 | `list_channels` | mesh? | read | List channels visible to you. |
 | `list_channel_members` | channel, mesh? | read | Members of a channel (§88a). |
 | `add_channel_member` | channel, user, mesh? | write | Add a mesh member to a channel (§88a: channel creator or mesh admin). |

@@ -73,7 +73,8 @@ mcp = FastMCP(
         "mesh-scoped tool to act in another mesh for that one call. "
         "Date-times must carry a UTC offset (e.g. 2026-10-20T09:00:00+11:00). "
         "List tools return count, the true total and truncated; page with "
-        "limit/offset. Auth comes from meshbook-cli's config (`mesh login`)."
+        "limit/offset=nextOffset, or for chat and channel reads before=nextBefore. "
+        "Auth comes from meshbook-cli's config (`mesh login`)."
     ),
 )
 
@@ -1027,13 +1028,48 @@ def post_chat(message: str, reply_to: str | None = None, mesh: str | None = None
     return {"posted": data.get("id")}
 
 
+def _before(before: str | None) -> str | None:
+    return aware_iso(before, "before") if before else None
+
+
+def _when(message: Any) -> _dt.datetime | None:
+    raw = message.get("createdAt") if isinstance(message, dict) else None
+    try:
+        dt = _dt.datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=_dt.timezone.utc)
+
+
+def _chronological(rows: ItemList) -> tuple[list[Any], str | None]:
+    """The page oldest first, and the cursor for the next (older) page: the
+    oldest message's createdAt.
+
+    Sorted by createdAt rather than trusting the wire order: the server's
+    chat and channel routes answer OLDEST first (ORDER BY created_at ASC,
+    app/routers/chat.py), while 0.8.0 assumed newest first and reversed
+    the page, so "oldest first" came out newest first. Rows without a
+    parseable createdAt keep their place at the end.
+    """
+    dated = [(when, i, m) for i, m in enumerate(rows) if (when := _when(m)) is not None]
+    undated = [m for m in rows if _when(m) is None]
+    dated.sort(key=lambda t: (t[0], t[1]))
+    ordered = [m for _, _, m in dated] + undated
+    cursor = str(dated[0][2]["createdAt"]) if dated else None
+    return ordered, cursor
+
+
 @tool(read_only=True)
-def read_thread(limit: int = 20, mesh: str | None = None) -> dict:
+def read_thread(limit: int = 20, before: str | None = None, mesh: str | None = None) -> dict:
     """Read the most recent messages from the mesh's main chat thread,
-    oldest first."""
+    oldest first. For older messages pass `before` = the `nextBefore` of the
+    previous answer (an ISO date-time with a UTC offset); there is no offset."""
     lim, _ = page(limit, None, maximum=200)
-    rows = client().chat.list(lim, mesh=mesh)
-    return listing([S.message_out(m) for m in reversed(rows)], rows=rows)
+    rows = client().chat.list(lim, before=_before(before), mesh=mesh)
+    ordered, cursor = _chronological(rows)
+    return listing(
+        [S.message_out(m) for m in ordered], rows=rows, paging="before", next_before=cursor
+    )
 
 
 # ── channels ──
@@ -1050,14 +1086,25 @@ def post_channel(channel: str, message: str, mesh: str | None = None) -> dict:
 
 
 @tool(read_only=True)
-def read_channel(channel: str, limit: int = 20, mesh: str | None = None) -> dict:
+def read_channel(
+    channel: str, limit: int = 20, before: str | None = None, mesh: str | None = None
+) -> dict:
     """Read the most recent messages from a channel, oldest first. `channel`
-    is a name (with or without '#') or an id."""
+    is a name (with or without '#') or an id. For older messages pass
+    `before` = the `nextBefore` of the previous answer; there is no offset."""
     lim, _ = page(limit, None, maximum=200)
+    cursor = _before(before)
     c = client()
     ch = c.channels.resolve(channel, mesh=mesh)
-    rows = c.channels.read(str(ch["id"]), lim, mesh=mesh)
-    return listing([S.message_out(m) for m in reversed(rows)], rows=rows, channel=ch.get("name"))
+    rows = c.channels.read(str(ch["id"]), lim, before=cursor, mesh=mesh)
+    ordered, oldest = _chronological(rows)
+    return listing(
+        [S.message_out(m) for m in ordered],
+        rows=rows,
+        paging="before",
+        next_before=oldest,
+        channel=ch.get("name"),
+    )
 
 
 @tool(read_only=True)
@@ -1111,7 +1158,9 @@ def search_chat(query: str, limit: int = 10, mesh: str | None = None) -> dict:
     embedding arm was down and recall was keyword-only."""
     lim, _ = page(limit, None, maximum=100)
     rows = client().chat.search(query, lim, mesh=mesh)
-    return listing([S.search_hit_out(h) for h in rows], rows=rows, semantic=rows.semantic)
+    return listing(
+        [S.search_hit_out(h) for h in rows], rows=rows, paging="none", semantic=rows.semantic
+    )
 
 
 # ── agent credentials (§86 / §97 / §96 / §99) ──
