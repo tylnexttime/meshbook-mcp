@@ -240,3 +240,12 @@ def test_a_failed_mint_never_quotes_the_token_endpoint_body(bench):
     with pytest.raises(server.MeshbookError) as exc:
         server.list_contacts()
     assert "SECRET" not in str(exc.value)
+
+
+def test_a_broken_bundle_gets_tool_advice(bench):
+    write_config(auth_mode="agent", active_mesh_id=MESH)
+    (bench["dir"] / "agent-key.json").write_text('{"kid": "kid-old"}', encoding="utf-8")
+    with pytest.raises(server.MeshbookError) as exc:
+        server.list_contacts()
+    assert exc.value.code == "no_agent_key"
+    assert "enroll_agent_credential" in exc.value.message and "client." not in exc.value.message

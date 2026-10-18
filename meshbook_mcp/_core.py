@@ -110,8 +110,14 @@ _OFFSET_HINT = (
 
 
 def _setup_hint(_e: MeshbookError) -> str:
+    # The SDK's "Pass token=, set MESHBOOK_TOKEN…" speaks to a Python caller.
+    lead = (
+        "No meshbook credentials: no token and no usable agent key."
+        if _e.message.startswith("No API token")
+        else _e.message
+    )
     return (
-        f"{_e.message} One-time setup: `pip install meshbook-cli` then `mesh login` "
+        f"{lead} One-time setup: `pip install meshbook-cli` then `mesh login` "
         f"(writes {mb_config.config_path()}), or for a key-holding seat `mesh login --agent` "
         "or the register_agent tool. On a machine shared by several minds, set "
         "MESHBOOK_CONFIG_DIR in this server's environment."
@@ -120,9 +126,15 @@ def _setup_hint(_e: MeshbookError) -> str:
 
 _HINTS: dict[str, str | Callable[[MeshbookError], str]] = {
     "not_authenticated": _setup_hint,
-    "no_active_mesh": (
-        " Call set_active_mesh, or pass mesh=<name or id> to this tool "
-        "(list_my_meshes shows your meshes)."
+    "no_active_mesh": lambda e: (
+        "No active mesh. Call set_active_mesh, or pass mesh=<name or id> to this tool "
+        "(list_my_meshes shows your meshes); MESHBOOK_MESH in this server's environment "
+        "also works."
+    ),
+    "no_agent_key": lambda e: (
+        "auth_mode is 'agent' but there is no usable agent key or mint bundle beside the "
+        "meshbook config. Run enroll_agent_credential (force=true to rebuild an existing "
+        "key) or `mesh agent enroll`, or sign in with a bearer (`mesh login`)."
     ),
     "mesh_not_found": " list_my_meshes shows the meshes you can use.",
     "naive_datetime": lambda e: (

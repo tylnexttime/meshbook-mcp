@@ -98,7 +98,12 @@ def test_checker_fails_on_a_missing_route(tmp_path, capsys):
 
 
 def test_ci_runs_the_contract_check_and_guards_the_tag():
-    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    import pytest
+
+    workflow = ROOT / ".github" / "workflows" / "ci.yml"
+    if not workflow.exists():
+        pytest.skip("no .github/ in an sdist")
+    ci = workflow.read_text(encoding="utf-8")
     assert "--calls tests/contract/mcp-calls.json" in ci
     assert "--scan meshbook_mcp" in ci
     assert 'test "$TAG" = "$VER"' in ci

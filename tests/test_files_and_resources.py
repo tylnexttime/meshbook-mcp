@@ -181,3 +181,15 @@ def test_model_gets_structured_results(api):
 def test_unknown_arguments_are_rejected(api):
     res = _call("list_contacts", {"serach": "typo"})
     assert res.is_error
+
+
+def test_handshake_reports_this_packages_version():
+    """0.1.1 and 0.5.1 both fixed a wrong serverInfo version; keep it fixed."""
+    from fastmcp import Client
+
+    async def go():
+        async with Client(server.mcp) as c:
+            return c.initialize_result.serverInfo
+
+    info = asyncio.run(go())
+    assert info.name == "meshbook" and info.version == server.VERSION

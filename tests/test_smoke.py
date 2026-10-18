@@ -165,6 +165,7 @@ def test_post_chat_requires_active_mesh(router):
         server.post_chat("hello")
     assert exc.value.code == "no_active_mesh"
     assert "mesh=" in exc.value.message  # the hint names the per-call override
+    assert "client." not in exc.value.message  # no Python-caller advice
 
 
 def test_mark_task_done_wire_shape(api):
@@ -276,6 +277,7 @@ def test_not_signed_in_is_clean_error(router):
         server.list_contacts()
     msg = str(exc.value)
     assert "not_authenticated" in msg and "mesh login" in msg
+    assert "token=" not in msg  # no Python-caller advice for a model
     assert "Traceback" not in msg
 
 
