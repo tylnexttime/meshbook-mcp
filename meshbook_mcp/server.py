@@ -810,6 +810,14 @@ def _recurrence(
     )
 
 
+def _default_end(start_iso: str, all_day: bool) -> str:
+    """meshbook-cli's default (field note 7): an hour after *start_iso*, or a
+    day after it for an all-day event. Added to the instant, so the offset is
+    *start_iso*'s own."""
+    step = _dt.timedelta(days=1) if all_day else _dt.timedelta(hours=1)
+    return (_dt.datetime.fromisoformat(start_iso) + step).isoformat()
+
+
 @tool(read_only=True)
 def list_events(
     start: str | None = None,
@@ -829,7 +837,10 @@ def list_events(
     to see each series once). `tz` is the IANA zone recurrences repeat in
     (e.g. Australia/Sydney, so a 09:00 meeting stays 09:00 across DST; the
     server defaults to UTC). `owner`: 'me', @username, name or id.
-    `linked_type`+`linked_id` filter by linked record (e.g. contact + id)."""
+    `linked_type`+`linked_id` filter by linked record (e.g. contact + id).
+    Items name fields start, end, type, allDay: the API's (and meshbook-cli
+    --json's) startAt, endAt, eventType, isAllDay; for an occurrence, start/end
+    are that occurrence and seriesStart is the series' own startAt."""
     c = client()
     s = aware_iso(start, "start") if start else None
     e = aware_iso(end, "end") if end else None
@@ -857,7 +868,8 @@ def list_events(
 @tool(read_only=True)
 def get_event(event_id: str, mesh: str | None = None) -> dict:
     """One event in full, with its attendees (their ids are what
-    remove_event_attendee takes) and its recurrence rule."""
+    remove_event_attendee takes) and its recurrence rule. Fields start, end,
+    type, allDay are the API's startAt, endAt, eventType, isAllDay."""
     return S.event_out(client().events.get(event_id, mesh=mesh), full=True)
 
 
@@ -865,7 +877,7 @@ def get_event(event_id: str, mesh: str | None = None) -> dict:
 def create_event(
     title: str,
     start: str,
-    end: str,
+    end: str | None = None,
     event_type: str = "Meeting",
     description: str | None = None,
     all_day: bool = False,
@@ -885,7 +897,10 @@ def create_event(
     mesh: str | None = None,
 ) -> dict:
     """Create a calendar event. `start`/`end` are ISO date-times WITH a UTC
-    offset (a naive time is refused). `event_type`: Meeting, Call, Milestone,
+    offset (a naive time is refused). `end` defaults to an hour after
+    `start` (a day, with all_day=true), as `mesh events create` does. The
+    answer names fields start, end, type, allDay: the API's (and meshbook-cli
+    --json's) startAt, endAt, eventType, isAllDay. `event_type`: Meeting, Call, Milestone,
     Deadline, Internal, External, Training. `attendees`: strings like
     "user:@wren", "contact:Jane Doe", "email:guest@example.com". `owner`
     defaults to you. Repeat with `repeat` = daily, weekly, fortnightly,
@@ -896,11 +911,12 @@ def create_event(
     c = client()
     rule = _recurrence(repeat, repeat_interval, repeat_until, repeat_count, repeat_weekdays)
     start_iso = aware_iso(start, "start")
+    end_iso = aware_iso(end, "end") if end else _default_end(start_iso, all_day)
     try:
         data = c.events.create(
             title,
             start_iso,
-            aware_iso(end, "end"),
+            end_iso,
             description=description,
             all_day=all_day,
             event_type=event_type,
@@ -957,7 +973,9 @@ def update_event(
     (people kept keep their RSVP); use add_event_attendee /
     remove_event_attendee for one person. Name a field in `clear` to empty it
     (clearable: description, location, meeting_url, owner, link, color,
-    attendees). Recurrence: set_event_recurrence / clear_event_recurrence."""
+    attendees). Recurrence: set_event_recurrence / clear_event_recurrence.
+    Arguments start, end, event_type and the answer's start, end, type are the
+    API's startAt, endAt, eventType."""
     c = client()
     cleared = clear_set(clear, _EVENT_CLEARABLE)
     given = {

@@ -233,3 +233,56 @@ def test_per_call_mesh_overrides_without_persisting(api):
 def test_event_outputs_are_json(api):
     api.add("GET", CAL, ok_list([EVENT]))
     json.dumps(server.list_events())
+
+
+# ─── 0.8.2: end defaults like the CLI (field note 7) ───────────────────
+
+
+def _tool_schema(name):
+    import asyncio
+
+    from fastmcp import Client
+
+    async def go():
+        async with Client(server.mcp) as c:
+            return {t.name: t for t in await c.list_tools()}[name]
+
+    return asyncio.run(go())
+
+
+def test_create_event_end_defaults_to_an_hour_after_start(api):
+    api.add("POST", CAL, ok(EVENT))
+    server.create_event("Standup", "2026-10-21T09:00:00+11:00", force=True)
+    body = api.body()
+    assert body["startAt"] == "2026-10-21T09:00:00+11:00"
+    assert body["endAt"] == "2026-10-21T10:00:00+11:00"
+
+
+def test_create_event_all_day_end_defaults_to_a_day_later(api):
+    api.add("POST", CAL, ok(EVENT))
+    server.create_event("Offsite", "2026-10-21T00:00:00+11:00", all_day=True, force=True)
+    body = api.body()
+    assert body["isAllDay"] is True
+    assert body["endAt"] == "2026-10-22T00:00:00+11:00"
+
+
+def test_create_event_keeps_an_explicit_end_and_positional_callers(api):
+    api.add("POST", CAL, ok(EVENT))
+    # 0.8.x callers pass end third, positionally: still works.
+    server.create_event("Standup", "2026-10-21T09:00:00+11:00", "2026-10-21T09:15:00+11:00",
+                        force=True)
+    assert api.body()["endAt"] == "2026-10-21T09:15:00+11:00"
+
+
+def test_create_event_schema_no_longer_requires_end():
+    schema = _tool_schema("create_event").inputSchema
+    assert set(schema["required"]) == {"title", "start"}
+
+
+@pytest.mark.parametrize("name", ["create_event", "update_event", "list_events", "get_event"])
+def test_event_tools_document_the_api_field_names(name):
+    """Inputs and answers say start/end/type; the API (and meshbook-cli
+    --json) says startAt/endAt/eventType. The descriptions name the mapping."""
+    text = _tool_schema(name).description
+    for api_key in ("startAt", "endAt", "eventType"):
+        assert api_key in text, (name, api_key)
