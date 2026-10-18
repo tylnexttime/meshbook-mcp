@@ -3,7 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ['v*']    # tag pushes (v0.1.0, v0.2.0, …) trigger the publish job below
+    tags: ['v*']    # tag pushes (v0.8.0, …) trigger the publish job below
   pull_request:
     branches: [main]
 
@@ -25,15 +25,31 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      # meshbook-sdk is the core this server is built on. The repo variable
+      # MESHBOOK_SDK_SPEC can point at a git ref while a new SDK minor is not
+      # on PyPI yet; by default the published pin is used.
       - name: Install package + dev deps
+        shell: bash
+        env:
+          SDK_SPEC: ${{ vars.MESHBOOK_SDK_SPEC || 'meshbook-sdk[agent]>=0.4,<0.5' }}
         run: |
           python -m pip install --upgrade pip
+          pip install "$SDK_SPEC"
           pip install -e ".[dev]"
 
-      - name: Lint (ruff)
+      - name: Lint (ruff, pinned minor)
         run: ruff check .
 
-      - name: Test
+      # F3: every SDK call the tools make (tests/contract/mcp-calls.json, which
+      # the test-suite keeps complete) exists in the pinned server OpenAPI.
+      - name: Contract check (SDK calls used by the MCP)
+        run: python scripts/contract_check.py --spec tests/contract/openapi.json --calls tests/contract/mcp-calls.json
+
+      # ...and no request is built by hand outside the SDK (expects 0 calls).
+      - name: Contract check (no hand-built HTTP in meshbook_mcp/)
+        run: python scripts/contract_check.py --spec tests/contract/openapi.json --scan meshbook_mcp
+
+      - name: Test (includes the README tool-table guard)
         run: pytest -ra
 
       - name: Build (sdist + wheel)
@@ -56,6 +72,16 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      # The family has shipped a version that disagreed with itself three
+      # times (DEV-DEBT §92 and siblings; this package's 0.5.0 told every
+      # client it was 0.4.0). A tag that does not match pyproject's version
+      # must never publish. (Guard copied from meshbook-sdk.)
+      - name: Tag matches pyproject version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VER="$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
+          echo "tag=$TAG pyproject=$VER"
+          test "$TAG" = "$VER"
       - name: Build
         run: |
           python -m pip install --upgrade pip build

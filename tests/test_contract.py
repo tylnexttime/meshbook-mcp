@@ -95,3 +95,13 @@ def test_checker_fails_on_a_missing_route(tmp_path, capsys):
                      encoding="utf-8")
     assert _checker().main(["--spec", str(SPEC), "--calls", str(bogus)]) == 1
     capsys.readouterr()
+
+
+def test_ci_runs_the_contract_check_and_guards_the_tag():
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "--calls tests/contract/mcp-calls.json" in ci
+    assert "--scan meshbook_mcp" in ci
+    assert 'test "$TAG" = "$VER"' in ci
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert '"ruff>=0.17,<0.18"' in pyproject
+    assert '"meshbook-sdk[agent]>=0.4,<0.5"' in pyproject and '"fastmcp>=3,<4"' in pyproject
