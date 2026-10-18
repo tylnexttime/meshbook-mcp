@@ -11,7 +11,8 @@ live there. What is left here is MCP-specific:
 * the listing envelope (count, TRUE total, truncated);
 * argument checks that must happen before the SDK sees a value (naive
   datetimes, ``clear=`` lists, vocabularies);
-* the file fence for ``attach_file`` / ``download_attachment``.
+* the file fence for ``attach_file`` / ``download_attachment`` and the
+  no-overwrite write (the filename sanitiser is the SDK's).
 """
 from __future__ import annotations
 
@@ -29,6 +30,7 @@ from typing import Any, TypeVar
 
 from meshbook import Client, ItemList, MeshbookError
 from meshbook import config as mb_config
+from meshbook import safe_filename as _sdk_safe_filename
 
 from meshbook_mcp import __version__
 
@@ -54,7 +56,7 @@ F = TypeVar("F", bound=Callable[..., Any])
 # ─── the SDK client ────────────────────────────────────────────────────
 
 _lock = threading.Lock()
-_cache: dict[str, Any] = {"key": None, "client": None, "by_mesh": {}}
+_cache: dict[str, Any] = {"key": None, "client": None}
 
 
 def _client_key() -> tuple[Any, ...]:
@@ -67,38 +69,33 @@ def _client_key() -> tuple[Any, ...]:
     )
 
 
-def _new_client(mesh: str | None = None) -> Client:
-    c = Client(mesh=mesh, user_agent=USER_AGENT)
+def _new_client() -> Client:
+    c = Client(user_agent=USER_AGENT)
     c.agent.kid_prefix = KID_PREFIX
     return c
 
 
-def client(mesh: str | None = None) -> Client:
-    """The process's SDK client (token cache and mesh-name cache live on it).
+def client() -> Client:
+    """The process's SDK client (token cache, mesh-name cache and your own
+    user id live on it).
 
-    Rebuilt whenever the config file or a meshbook env var changes. With
-    *mesh*, a client whose OWN mesh is that one: only needed by the raw
-    download path, which has no per-call ``mesh=``. Every other tool passes
-    ``mesh=`` to the SDK call instead.
+    Rebuilt whenever the config file or a meshbook env var changes. Every
+    tool passes ``mesh=`` to the SDK call for a per-call mesh (since 0.8.1
+    that includes downloads, so no per-mesh client is kept any more).
     """
     key = _client_key()
     with _lock:
         if _cache["key"] != key:
-            _cache.update(key=key, client=None, by_mesh={})
-        if mesh is None:
-            if _cache["client"] is None:
-                _cache["client"] = _new_client()
-            return _cache["client"]
-        by_mesh: dict[str, Client] = _cache["by_mesh"]
-        if mesh not in by_mesh:
-            by_mesh[mesh] = _new_client(mesh)
-        return by_mesh[mesh]
+            _cache.update(key=key, client=None)
+        if _cache["client"] is None:
+            _cache["client"] = _new_client()
+        return _cache["client"]
 
 
 def reset_client() -> None:
     """Forget the cached client (tests; also harmless at runtime)."""
     with _lock:
-        _cache.update(key=None, client=None, by_mesh={})
+        _cache.update(key=None, client=None)
 
 
 # ─── errors, written for a model ───────────────────────────────────────
@@ -420,29 +417,42 @@ def fenced(path_str: str, *, purpose: str) -> Path:
     )
 
 
-_UNSAFE = re.compile(r'[<>:"|?*\x00-\x1f]')
-#: Device names Windows refuses as filenames whatever the extension.
-_RESERVED = frozenset(
-    {"CON", "PRN", "AUX", "NUL"}
-    | {f"COM{i}" for i in range(1, 10)}
-    | {f"LPT{i}" for i in range(1, 10)}
-)
+#: The ONE filename sanitiser: the SDK's (0.8.0 carried its own copy here).
+#: Re-exported for callers of 0.8.0's ``_core.safe_filename``.
+safe_filename = _sdk_safe_filename
 
 
-def safe_filename(name: str | None) -> str:
-    """A server-supplied filename reduced to a bare, harmless basename.
+def refuse_existing(target: Path, *, overwrite: bool) -> None:
+    """``file_exists`` for a directory, or for an existing file unless *overwrite*."""
+    if target.is_dir():
+        raise MeshbookError("file_exists", f"{target} is a directory.")
+    if os.path.lexists(target) and not overwrite:
+        raise MeshbookError(
+            "file_exists",
+            f"{target} already exists. Pass overwrite=true to replace it, or choose another path.",
+        )
 
-    Content-Disposition is uploader-controlled: ``../../.bashrc`` or
-    ``C:evil`` must never steer where a download lands.
+
+def download_target(out: Path, filename: str, *, purpose: str) -> Path:
+    """Where a download whose server name is *filename* lands, given the
+    fenced *out* (a directory or a file path).
+
+    For a directory, *filename* (already reduced by the SDK's
+    ``safe_filename``) must resolve DIRECTLY inside it: a symlink planted
+    under that name would otherwise carry the write anywhere the fence
+    allows (``~/.bashrc``, with overwrite=true). The fence is applied to the
+    resolved target too.
     """
-    raw = str(name or "")
-    # Same answer on every OS: split on both separators, then neutralise the
-    # characters Windows gives meaning to (``C:x`` is drive-relative there).
-    base = raw.replace("\\", "/").split("/")[-1]
-    base = _UNSAFE.sub("_", base).strip().strip(".")
-    if base.split(".")[0].upper() in _RESERVED:
-        base = "_" + base
-    return base or "attachment"
+    if not out.is_dir():
+        return out
+    target = fenced(str(out / filename), purpose=purpose)
+    if target.parent != out:
+        raise MeshbookError(
+            "unsafe_path",
+            f"{purpose}: {out / filename} resolves to {target}, outside {out} (a link?). "
+            "Choose another directory or give a full file path in out_path.",
+        )
+    return target
 
 
 def write_new(target: Path, content: bytes, *, overwrite: bool) -> None:
@@ -453,13 +463,7 @@ def write_new(target: Path, content: bytes, *, overwrite: bool) -> None:
     failed download never leaves a half-written file behind.
     """
     target.parent.mkdir(parents=True, exist_ok=True)
-    if target.is_dir():
-        raise MeshbookError("file_exists", f"{target} is a directory.")
-    if target.exists() and not overwrite:
-        raise MeshbookError(
-            "file_exists",
-            f"{target} already exists. Pass overwrite=true to replace it, or choose another path.",
-        )
+    refuse_existing(target, overwrite=overwrite)
     fd, tmp_name = tempfile.mkstemp(prefix=".meshbook-dl-", dir=str(target.parent))
     tmp = Path(tmp_name)
     try:
@@ -497,6 +501,7 @@ __all__ = [
     "canon",
     "clear_set",
     "client",
+    "download_target",
     "due_value",
     "fenced",
     "hinted",
@@ -504,6 +509,7 @@ __all__ = [
     "iso_date",
     "listing",
     "page",
+    "refuse_existing",
     "require_uuid",
     "reset_client",
     "safe_filename",

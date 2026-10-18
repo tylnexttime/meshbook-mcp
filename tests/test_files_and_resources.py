@@ -96,6 +96,47 @@ def test_download_ignores_a_hostile_server_filename(api, home_and_cwd, dispositi
     assert sorted(p.name for p in home_and_cwd.iterdir()) == ["dl"]
 
 
+def test_one_sanitiser_the_sdks():
+    """0.8.0 carried its own copy of the filename sanitiser; 0.8.1 has one."""
+    import meshbook
+
+    assert _core.safe_filename is meshbook.safe_filename
+    assert not hasattr(_core, "_UNSAFE") and not hasattr(_core, "_RESERVED")
+
+
+def test_download_refuses_an_existing_file_before_downloading(api, home_and_cwd):
+    """0.8.0 fetched the whole attachment and only then refused to write it."""
+    _served(api, b"new")
+    target = home_and_cwd / "keep.pdf"
+    target.write_bytes(b"old")
+    with pytest.raises(server.MeshbookError) as exc:
+        server.download_attachment("att-9", str(target))
+    assert exc.value.code == "file_exists"
+    assert api.calls("GET", ATT) == []
+    assert target.read_bytes() == b"old"
+
+
+def test_download_cannot_follow_a_link_planted_under_the_safe_name(api, home_and_cwd):
+    """The server names the file `report.pdf`; a symlink of that name in the
+    download directory pointing at another file under home must not carry an
+    overwrite=true download there (0.8.0 resolved the link and wrote through)."""
+    import os
+
+    victim = home_and_cwd / ".bashrc"
+    victim.write_bytes(b"precious")
+    dl = home_and_cwd / "dl"
+    dl.mkdir()
+    try:
+        os.symlink(victim, dl / "report.pdf")
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are not permitted here")
+    _served(api, b"evil")
+    with pytest.raises(server.MeshbookError) as exc:
+        server.download_attachment("att-9", str(dl), overwrite=True)
+    assert exc.value.code == "unsafe_path"
+    assert victim.read_bytes() == b"precious"
+
+
 def test_download_refuses_the_config_dir(api, home_and_cwd, monkeypatch):
     monkeypatch.setenv(_core.ALLOW_ANY_PATH_ENV, "1")
     with pytest.raises(server.MeshbookError) as exc:

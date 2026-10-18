@@ -28,7 +28,6 @@ from typing import Any
 
 from fastmcp import FastMCP
 from meshbook import ItemList, MeshbookError, recurrence_rule
-from meshbook._endpoints import ENDPOINTS
 from meshbook.resources import PRIORITIES, PROJECT_ROLES, STATUSES
 
 from meshbook_mcp import _shapes as S
@@ -41,13 +40,14 @@ from meshbook_mcp._core import (
     canon,
     clear_set,
     client,
+    download_target,
     due_value,
     fenced,
     iso_date,
     listing,
     page,
+    refuse_existing,
     require_uuid,
-    safe_filename,
     user_ref,
     with_hints,
     write_new,
@@ -1223,17 +1223,19 @@ def download_attachment(
     directory, the server's filename is used (reduced to a safe basename).
     Never replaces an existing file unless overwrite=true. Same path rules as
     attach_file."""
-    out = fenced(out_path, purpose="download_attachment")
-    c = client(mesh) if mesh else client()
-    # files.download() would write the file itself, joining the server's
-    # (uploader-controlled) filename onto out_path and overwriting anything
-    # there; download_raw hands back the bytes so both can be policed here.
-    path = ENDPOINTS["files.download"].render({"attachment_id": attachment_id})
-    content, server_name = c.download_raw(path)
-    target = out / safe_filename(server_name) if out.is_dir() else out
-    target = fenced(str(target), purpose="download_attachment")
-    write_new(target, content, overwrite=overwrite)
-    return {"path": str(target), "bytes": len(content)}
+    purpose = "download_attachment"
+    out = fenced(out_path, purpose=purpose)
+    if not out.is_dir():
+        # An explicit file path is refused BEFORE the download (0.8.0 fetched
+        # the whole file first and only then said no).
+        refuse_existing(out, overwrite=overwrite)
+    # The SDK hands back the bytes and the server's name already reduced by
+    # meshbook.safe_filename (the one sanitiser); where it may land, and
+    # whether it may replace anything, is policed here (fence, no-overwrite).
+    dl = client().files.download_bytes(attachment_id, mesh=mesh)
+    target = download_target(out, dl.filename, purpose=purpose)
+    write_new(target, dl.content, overwrite=overwrite)
+    return {"path": str(target), "bytes": len(dl.content)}
 
 
 # ── export (§58) ──
