@@ -24,7 +24,7 @@ import tempfile
 import threading
 import uuid as _uuid
 from collections.abc import Callable, Iterable, Sequence
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 from typing import Any, TypeVar
 
 from meshbook import Client, ItemList, MeshbookError
@@ -400,6 +400,12 @@ def fenced(path_str: str, *, purpose: str) -> Path:
 
 
 _UNSAFE = re.compile(r'[<>:"|?*\x00-\x1f]')
+#: Device names Windows refuses as filenames whatever the extension.
+_RESERVED = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{i}" for i in range(1, 10)}
+    | {f"LPT{i}" for i in range(1, 10)}
+)
 
 
 def safe_filename(name: str | None) -> str:
@@ -409,8 +415,12 @@ def safe_filename(name: str | None) -> str:
     ``C:evil`` must never steer where a download lands.
     """
     raw = str(name or "")
-    base = PureWindowsPath(raw.replace("\\", "/").split("/")[-1]).name
+    # Same answer on every OS: split on both separators, then neutralise the
+    # characters Windows gives meaning to (``C:x`` is drive-relative there).
+    base = raw.replace("\\", "/").split("/")[-1]
     base = _UNSAFE.sub("_", base).strip().strip(".")
+    if base.split(".")[0].upper() in _RESERVED:
+        base = "_" + base
     return base or "attachment"
 
 

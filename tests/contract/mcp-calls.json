@@ -1,13 +1,89 @@
 [
   {
     "method": "GET",
+    "path": "/api/calendar-events"
+  },
+  {
+    "method": "POST",
+    "path": "/api/calendar-events"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/calendar-events/{event_id}"
+  },
+  {
+    "method": "GET",
+    "path": "/api/calendar-events/{event_id}"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/calendar-events/{event_id}"
+  },
+  {
+    "method": "POST",
+    "path": "/api/calendar-events/{event_id}/attendees"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/calendar-events/{event_id}/attendees/{attendee_id}"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/calendar-events/{event_id}/recurrence"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/calendar-events/{event_id}/recurrence"
+  },
+  {
+    "method": "GET",
     "path": "/api/channels/{channel_id}"
+  },
+  {
+    "method": "GET",
+    "path": "/api/channels/{channel_id}/members"
+  },
+  {
+    "method": "POST",
+    "path": "/api/channels/{channel_id}/members"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/channels/{channel_id}/members/{user_id}"
   },
   {
     "method": "GET",
     "path": "/api/channels/{channel_id}/messages"
   },
   {
+    "method": "POST",
+    "path": "/api/channels/{channel_id}/messages"
+  },
+  {
+    "method": "GET",
+    "path": "/api/chat/search"
+  },
+  {
+    "method": "GET",
+    "path": "/api/companies"
+  },
+  {
+    "method": "POST",
+    "path": "/api/companies"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/companies/{company_id}"
+  },
+  {
+    "method": "GET",
+    "path": "/api/companies/{company_id}"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/companies/{company_id}"
+  },
+  {
     "method": "GET",
     "path": "/api/contacts"
   },
@@ -16,8 +92,24 @@
     "path": "/api/contacts"
   },
   {
+    "method": "DELETE",
+    "path": "/api/contacts/{contact_id}"
+  },
+  {
+    "method": "GET",
+    "path": "/api/contacts/{contact_id}"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/contacts/{contact_id}"
+  },
+  {
     "method": "POST",
     "path": "/api/entities/{entity_type}/{entity_id}/attachments/json"
+  },
+  {
+    "method": "GET",
+    "path": "/api/entities/{entity_type}/{entity_id}/chat"
   },
   {
     "method": "POST",
@@ -25,18 +117,42 @@
   },
   {
     "method": "GET",
+    "path": "/api/entities/{entity_type}/{entity_id}/tags"
+  },
+  {
+    "method": "POST",
+    "path": "/api/entities/{entity_type}/{entity_id}/tags"
+  },
+  {
+    "method": "GET",
     "path": "/api/entity-attachments/{attachment_id}/download"
+  },
+  {
+    "method": "GET",
+    "path": "/api/leads"
   },
   {
     "method": "POST",
     "path": "/api/leads"
   },
   {
+    "method": "DELETE",
+    "path": "/api/leads/{lead_id}"
+  },
+  {
     "method": "POST",
     "path": "/api/leads/{lead_id}/move-stage"
   },
   {
+    "method": "GET",
+    "path": "/api/me"
+  },
+  {
     "method": "DELETE",
+    "path": "/api/me/agent-credentials"
+  },
+  {
+    "method": "GET",
     "path": "/api/me/agent-credentials"
   },
   {
@@ -65,6 +181,10 @@
   },
   {
     "method": "GET",
+    "path": "/api/meshes/{mesh_id}/exports"
+  },
+  {
+    "method": "GET",
     "path": "/api/notifications"
   },
   {
@@ -72,11 +192,59 @@
     "path": "/api/pipelines"
   },
   {
+    "method": "GET",
+    "path": "/api/projects"
+  },
+  {
+    "method": "POST",
+    "path": "/api/projects"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/projects/{project_id}"
+  },
+  {
+    "method": "GET",
+    "path": "/api/projects/{project_id}"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/projects/{project_id}"
+  },
+  {
+    "method": "POST",
+    "path": "/api/projects/{project_id}/members"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/projects/{project_id}/members/{user_id}"
+  },
+  {
     "method": "POST",
     "path": "/api/register/agent"
   },
   {
+    "method": "GET",
+    "path": "/api/tasks"
+  },
+  {
+    "method": "POST",
+    "path": "/api/tasks"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/tasks/{task_id}"
+  },
+  {
+    "method": "GET",
+    "path": "/api/tasks/{task_id}"
+  },
+  {
     "method": "PATCH",
     "path": "/api/tasks/{task_id}"
+  },
+  {
+    "method": "GET",
+    "path": "/api/users"
   }
 ]

@@ -41,7 +41,7 @@ def main() -> int:
                 e = json.loads(line)
                 seen.add((e["method"], e["path"]))
     rows = [{"method": m, "path": p} for m, p in sorted(seen, key=lambda t: (t[1], t[0]))]
-    OUT.write_text(json.dumps(rows, indent=2) + "\n", encoding="utf-8")
+    OUT.write_text(json.dumps(rows, indent=2) + "\n", encoding="utf-8", newline="\n")
     print(f"refresh_mcp_calls: {len(rows)} calls -> {OUT.relative_to(ROOT)}")
     return 0
 
