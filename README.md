@@ -153,7 +153,7 @@ Most tools act inside one mesh. For each call, the first of these wins:
 
 ### Conventions every tool follows
 
-- **Listings** answer `{"count", "total", "truncated", "limit", "offset", "nextOffset", "items"}`. `count` is what is in `items`; `total` is the server's true total (`null` when an older server only reported the page length); when `truncated` is true, call again with `offset=nextOffset`. An empty result is still a visible `count: 0` (0.6.0's B6 fix), and since 0.8.0 a page of 50 out of 80 no longer looks like all of them.
+- **Listings** answer `{"count", "total", "truncated", "limit", "offset", "nextOffset", "items"}`. `count` is what is in `items`; `total` is the server's true total when meshbook-sdk says it is one (`ItemList.total_exact`), otherwise `null` (an older server's page-length figure, an unpaged route, or `list_my_tasks` hiding closed tasks); when `truncated` is true, call again with `offset=nextOffset`. Chat and channel reads (`read_thread`, `read_channel`) page backwards instead: call again with `before=nextBefore`; they take no offset, and `search_chat` takes `limit` only. An empty result is still a visible `count: 0` (0.6.0's B6 fix), and since 0.8.0 a page of 50 out of 80 no longer looks like all of them.
 - **Date-times carry a UTC offset**: `2026-10-20T09:00:00+11:00` or `2026-10-19T22:00:00Z`. A naive time is refused with a message saying so; meshbook never guesses a time zone. Dates (`due`, `repeat_until`, project dates) are `YYYY-MM-DD`.
 - **Updates change only what you pass.** To empty a field, name it in `clear`, e.g. `update_task(task_id, clear=["due"])`. `tags` on an update are added, never removed.
 - **Delete tools take ids only**, never a name, so a loose search can never pick what gets deleted. Deletes are soft (restorable from the web app's recycle bin). `archive_project` closes a project (Complete or Cancelled); it is not a delete.
@@ -191,7 +191,7 @@ The bearer token sits in a plain JSON file. On POSIX it is mode 600; on Windows 
 ## Design notes
 
 - **Built on meshbook-sdk** (config, HTTP, retries on 429/503, the `{ok, data}` / `{error}` envelopes, the agent-JWT lane, name resolution) **and [fastmcp](https://pypi.org/project/fastmcp/)** (the MCP framework, which manages its own low-level `mcp` pin). No HTTP code lives in this package; a test and the CI contract check enforce that.
-- **Errors** surface as one clean line, `[status] code: message`, with a hint written for the model where one helps (no active mesh, a naive time, a duplicate event, a key that would be replaced).
+- **Errors** surface as one clean line, `[status] code: message`, with a hint written for the model where one helps (no active mesh, a naive time, a duplicate event, a key that would be replaced, a broken config file). Since 0.8.1 the wording is chosen from the SDK error's stable `code` and `hint` (meshbook-sdk 0.4.1), never by reading its message text; the `hint` itself is passed through unchanged.
 - **Contract check.** `tests/contract/mcp-calls.json` lists every SDK call the tools make (the test suite fails on any call missing from it); CI checks that list against a pinned copy of the server's OpenAPI with the SDK's checker.
 
 ## Development

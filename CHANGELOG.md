@@ -4,6 +4,68 @@ All notable changes to `meshbook-mcp` are documented here. The format follows [K
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-10-19
+
+A fast follow onto meshbook-sdk 0.4.1: the SDK's public surface replaces
+the private and hand-rolled pieces 0.8.0 still carried, and the bugs found
+on the way are fixed, each with a test that failed on 0.8.0.
+
+### Changed
+
+- **Depends on `meshbook-sdk[agent]>=0.4.1,<0.5`.**
+- **`download_attachment` uses `files.download_bytes(id, mesh=)`.** No
+  more `meshbook._endpoints` import, hand-rendered path or
+  `download_raw`. The server's filename is reduced by the SDK's
+  `meshbook.safe_filename`, the one sanitiser (the MCP's own copy is gone;
+  `_core.safe_filename` is now the SDK's). The MCP's write-side policy
+  stays: home/cwd fence, never the config dir, no overwrite without
+  `overwrite=true`.
+- **Errors are mapped by code and `MeshbookError.hint`**, never by
+  searching or splitting the SDK's message. Codes whose SDK message advises
+  a Python caller get MCP wording (including the new `config_unreadable`
+  and `pending_key`); otherwise the SDK message is kept and a sentence
+  chosen by the hint is added. The hint is passed through. Errors the MCP
+  raises itself are `ToolError`, a `MeshbookError` subclass.
+- **`read_thread` and `read_channel` take `before=`** (an ISO date-time
+  with an offset) and answer `nextBefore`; they never answer `nextOffset`
+  (the routes ignore an offset and the SDK now refuses one). `search_chat`
+  answers no cursor (it takes `limit` only).
+- **Listings report `total` only when `ItemList.total_exact` says it is
+  the full count**, and `nextOffset` from `ItemList.next_offset`. As a
+  result `list_my_meshes` (an unpaged route) and `list_my_tasks` with
+  closed tasks hidden now answer `total: null`.
+- **`list_my_tasks` uses `tasks.list_mine(open_only=)`**; so does the
+  `meshbook://my-tasks-today` resource.
+- **`me` costs one `GET /api/me` per client** (`client.me_id()`), not one
+  per argument per call.
+- `set_active_mesh` reads `Mesh.env_override`.
+- Tests read the public `meshbook.endpoints`; two guards keep the package
+  off private `meshbook._*` modules and off `download_raw`.
+
+### Fixed
+
+- **Chat order.** The server's chat and channel routes answer oldest first;
+  0.8.0 assumed newest first and reversed the page, so the "oldest first"
+  tools showed newest first. The page is sorted by `createdAt` now.
+- **Chat truncation.** Those routes send `hasMore`; 0.8.0 called any full
+  page truncated. `hasMore` decides now.
+- **A symlink planted under the safe filename** in a download directory
+  carried an `overwrite=true` download wherever it pointed inside home;
+  refused now (`unsafe_path`).
+- **An existing `out_path` file** was refused only after the whole
+  download; it is refused before the request.
+- **A corrupt config** (now `config_unreadable` from the SDK) reached the
+  model with the SDK's Python advice; it gets MCP wording naming the file,
+  which is left untouched.
+- **The SDK's raise-site hint was lost** when an error was re-worded (a
+  401 rejection's `reauthenticate` came back as `provide_credentials`).
+- **`set_active_mesh`** let the SDK's `UserWarning` out on stderr and added
+  its override note whenever `MESHBOOK_MESH` was set, even to the mesh just
+  saved.
+- Test fakes now emit the server's real envelopes (`ok_page` sends limit
+  and offset; unpaged routes send `ok_list`'s single page; chat sends
+  `items`/`pinned`/`hasMore`, oldest first).
+
 ## [0.8.0] — 2026-10-19
 
 ### Changed — built on meshbook-sdk; the MCP owns only the MCP surface
