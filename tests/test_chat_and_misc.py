@@ -111,6 +111,19 @@ def test_read_channel_pages_with_before(api):
     assert out["nextBefore"] == "2026-10-19T04:00:00Z" and "nextOffset" not in out
 
 
+def test_read_channel_by_id_fetches_the_channel_once(api):
+    """A channel given as a UUID is fetched directly (GET /api/channels/{id},
+    for its name); since SDK 0.4.1 the read itself adds no second lookup.
+    Keeps that route exercised, so refresh_mcp_calls.py never drops it from
+    tests/contract/mcp-calls.json while the tool can still call it."""
+    _channels(api)
+    api.add("GET", f"/api/channels/{CH1}/messages", _chat_page([5], has_more=False))
+    out = server.read_channel(CH1)
+    assert out["channel"] == "general" and out["count"] == 1
+    assert len(api.calls("GET", f"/api/channels/{CH1}")) == 1
+    assert api.calls("GET", f"/api/meshes/{MESH}/channels") == []
+
+
 def test_no_chat_read_tool_takes_offset():
     """The SDK refuses offset= on chat, channel and DM reads and on search."""
     tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}
