@@ -22,11 +22,17 @@ Transport is stdio only (see the README before exposing anything else).
 from __future__ import annotations
 
 import datetime as _dt
+import functools
 import json
+import logging
+import os
 import warnings
 from typing import Any
 
+import fastmcp
 from fastmcp import FastMCP
+from fastmcp.exceptions import ResourceError as _FastMCPResourceError
+from fastmcp.exceptions import ToolError as _FastMCPToolError
 from meshbook import ItemList, MeshbookError, recurrence_rule
 from meshbook.resources import PRIORITIES, PROJECT_ROLES, STATUSES
 
@@ -47,6 +53,7 @@ from meshbook_mcp._core import (
     fenced,
     iso_date,
     listing,
+    log_expected,
     page,
     refuse_existing,
     require_uuid,
@@ -101,7 +108,47 @@ def tool(
         }
         if idempotent is not None:
             ann["idempotentHint"] = idempotent
-        mcp.tool(annotations=ann)(wrapped)
+        mcp.tool(annotations=ann)(_quiet(wrapped, fn.__name__, kind="tool"))
+        # Python callers (and the tests) get the plain function, which raises
+        # MeshbookError as before; only the MCP registration is quietened.
+        return wrapped
+
+    return deco
+
+
+def _quiet(fn, name: str, *, kind: str):
+    """What FastMCP runs: *fn*, with an expected error logged as ONE stderr
+    line (``_core.log_expected``) and handed to FastMCP as its own
+    ToolError/ResourceError below its log level, so it prints no traceback.
+
+    The text the client sees is exactly 0.8.1's (``Error calling tool
+    'x': [status] code: message``). Any other exception passes through, and
+    FastMCP logs its full traceback as before: that is a bug worth seeing.
+    """
+
+    @functools.wraps(fn)
+    def adapter(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return fn(*args, **kwargs)
+        except MeshbookError as e:
+            log_expected(name, e)
+            if kind == "resource":
+                raise _FastMCPResourceError(
+                    f"Error reading resource {name!r}: {e}", log_level=logging.DEBUG
+                ) from e
+            raise _FastMCPToolError(
+                f"Error calling tool {name!r}: {e}", log_level=logging.DEBUG
+            ) from e
+
+    return adapter
+
+
+def resource(uri: str):
+    """``@mcp.resource(uri)`` with model-facing hints and one-line errors."""
+
+    def deco(fn):
+        wrapped = with_hints(fn)
+        mcp.resource(uri)(_quiet(wrapped, uri, kind="resource"))
         return wrapped
 
     return deco
@@ -1354,8 +1401,7 @@ def export_status(mesh_id: str) -> dict:
 # ─── resources ─────────────────────────────────────────────────────────
 
 
-@mcp.resource("meshbook://my-meshes")
-@with_hints
+@resource("meshbook://my-meshes")
 def resource_my_meshes() -> str:
     """The meshes you belong to, with roles and the active marker."""
     c = client()
@@ -1366,8 +1412,7 @@ def resource_my_meshes() -> str:
     return json.dumps([S.mesh_out(m.raw, active) for m in c.meshes.list_mine()], indent=2)
 
 
-@mcp.resource("meshbook://active-mesh")
-@with_hints
+@resource("meshbook://active-mesh")
 def resource_active_mesh() -> str:
     """The currently active mesh (id + name + where it came from), or a hint."""
     info = _active_mesh_info(client())
@@ -1404,8 +1449,7 @@ def _due_by_end_of_today(task: dict, now: _dt.datetime) -> bool:
     return False
 
 
-@mcp.resource("meshbook://my-tasks-today")
-@with_hints
+@resource("meshbook://my-tasks-today")
 def resource_my_tasks_today() -> str:
     """Your open tasks due today (this machine's date) or overdue, plus open
     undated tasks listed separately."""
@@ -1426,8 +1470,7 @@ def resource_my_tasks_today() -> str:
     )
 
 
-@mcp.resource("meshbook://notifications")
-@with_hints
+@resource("meshbook://notifications")
 def resource_notifications() -> str:
     """Your unread meshbook notifications."""
     rows = client().notifications.list(unread_only=True, limit=100)
@@ -1487,9 +1530,52 @@ def whats_new() -> str:
 # ─── entry point ───────────────────────────────────────────────────────
 
 
+#: FastMCP's documented switches for its start-up banner and the PyPI
+#: "Update available" lookup behind it. Set either in this server's
+#: environment and it is honoured; unset, meshbook-mcp turns both off.
+BANNER_ENV = "FASTMCP_SHOW_SERVER_BANNER"
+UPDATE_CHECK_ENV = "FASTMCP_CHECK_FOR_UPDATES"
+#: FastMCP's log level and rich-logging switches, honoured the same way.
+LOG_LEVEL_ENV = "FASTMCP_LOG_LEVEL"
+RICH_LOGGING_ENV = "FASTMCP_ENABLE_RICH_LOGGING"
+
+
+def _run_options() -> dict[str, Any]:
+    """Keep stdio's stderr quiet (field note 8, Alder 2026-10-19).
+
+    0.8.1 printed FastMCP's banner, plus an "Update available" box after a
+    PyPI lookup, on every start: noise on the only log a stdio client has,
+    and advice ("pip install --upgrade fastmcp") that would break our
+    ``fastmcp<4`` pin. FastMCP's rich log handler also wraps a long line
+    over several at 80 columns. All of these are FastMCP settings, so they
+    are set, not patched, and each one set in the environment wins:
+
+    * ``show_banner=False`` (``FastMCP.run``);
+    * ``settings.check_for_updates = "off"``;
+    * plain one-line log records (``settings.enable_rich_logging = False``)
+      at WARNING, so the INFO "Starting MCP server" line is not printed.
+      A genuinely unexpected exception still logs its full traceback.
+
+    Called from :func:`main` only: importing this module changes nothing.
+    """
+    if UPDATE_CHECK_ENV not in os.environ:
+        fastmcp.settings.check_for_updates = "off"
+    rich_set = RICH_LOGGING_ENV in os.environ
+    level_set = LOG_LEVEL_ENV in os.environ
+    if not (rich_set and level_set):
+        from fastmcp.utilities.logging import configure_logging
+
+        if not rich_set:
+            fastmcp.settings.enable_rich_logging = False
+        if not level_set:
+            fastmcp.settings.log_level = "WARNING"
+        configure_logging(level=fastmcp.settings.log_level)
+    return {} if BANNER_ENV in os.environ else {"show_banner": False}
+
+
 def main() -> None:
     """Console entry point — stdio transport, the only one (see README)."""
-    mcp.run()
+    mcp.run(**_run_options())
 
 
 if __name__ == "__main__":

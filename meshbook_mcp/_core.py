@@ -19,8 +19,10 @@ from __future__ import annotations
 import datetime as _dt
 import functools
 import json
+import logging
 import os
 import re
+import sys
 import tempfile
 import threading
 import uuid as _uuid
@@ -235,6 +237,55 @@ def hinted(e: MeshbookError, overrides: Overrides | None = None) -> MeshbookErro
             return e
         message = f"{e.message.rstrip()} {extra}"
     return ToolError(e.code, message, e.status, hint=e.hint)
+
+
+# ─── stderr: one line per expected error ───────────────────────────────
+#
+# On a stdio server stderr is the only log, and a client that does not
+# drain it can stall once the pipe fills (field note 8, Alder 2026-10-19:
+# 0.8.1 let FastMCP print every MeshbookError as a ~40-line rich traceback).
+# A MeshbookError is an ordinary, classified outcome (a refused argument, a
+# 404, a revoked token): it is logged here as ONE line and handed to FastMCP
+# below its log level. Anything else is a bug, and FastMCP still logs its
+# full traceback.
+
+#: The logger the expected-error lines go to (configure it like any other).
+log = logging.getLogger("meshbook_mcp")
+
+
+class _StderrLine(logging.Handler):
+    """Writes to whatever ``sys.stderr`` is at emit time (so a test's capture
+    or a later redirect sees it), one record per line."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            stream = sys.stderr
+            if stream is None:
+                return
+            stream.write(self.format(record) + "\n")
+            stream.flush()
+        except Exception:  # pragma: no cover - logging must never raise
+            self.handleError(record)
+
+
+if not log.handlers:
+    _handler = _StderrLine()
+    _handler.setFormatter(logging.Formatter("meshbook-mcp %(levelname)s: %(message)s"))
+    log.addHandler(_handler)
+    log.setLevel(logging.INFO)
+    log.propagate = False
+
+
+def one_line(text: Any, limit: int = 500) -> str:
+    """*text* with every run of whitespace (newlines included) collapsed to
+    one space, cut at *limit* characters."""
+    flat = " ".join(str(text).split())
+    return flat if len(flat) <= limit else flat[: limit - 1] + "…"
+
+
+def log_expected(where: str, e: MeshbookError) -> None:
+    """The one stderr line for an expected error in tool or resource *where*."""
+    log.warning("%s: %s", where, one_line(f"{e.code} ({e.status}): {e.message}"))
 
 
 def with_hints(fn: F, overrides: Overrides | None = None) -> F:
@@ -600,6 +651,9 @@ __all__ = [
     "is_uuid",
     "iso_date",
     "listing",
+    "log",
+    "log_expected",
+    "one_line",
     "page",
     "refuse_existing",
     "require_uuid",
