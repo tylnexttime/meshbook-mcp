@@ -197,7 +197,7 @@ The bearer token sits in a plain JSON file. On POSIX it is mode 600; on Windows 
 ## Development
 
 ```bash
-pip install -e "path/to/meshbook-sdk[agent]"   # until meshbook-sdk 0.4 is on PyPI
+pip install -e "path/to/meshbook-sdk[agent]"   # until meshbook-sdk 0.4.1 is on PyPI
 pip install -e ".[dev]"
 pytest
 ruff check .

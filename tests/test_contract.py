@@ -109,4 +109,4 @@ def test_ci_runs_the_contract_check_and_guards_the_tag():
     assert 'test "$TAG" = "$VER"' in ci
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert '"ruff>=0.17,<0.18"' in pyproject
-    assert '"meshbook-sdk[agent]>=0.4,<0.5"' in pyproject and '"fastmcp>=3,<4"' in pyproject
+    assert '"meshbook-sdk[agent]>=0.4.1,<0.5"' in pyproject and '"fastmcp>=3,<4"' in pyproject

@@ -37,7 +37,7 @@ requires-python = ">=3.10"
 #   low-level `mcp` pin (the `mcp` SDK 2.0 dropped FastMCP), so we never pin
 #   `mcp` ourselves.
 dependencies = [
-    "meshbook-sdk[agent]>=0.4,<0.5",
+    "meshbook-sdk[agent]>=0.4.1,<0.5",
     "fastmcp>=3,<4",
 ]
 
