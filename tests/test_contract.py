@@ -21,7 +21,10 @@ CALLS = ROOT / "tests" / "contract" / "mcp-calls.json"
 
 FORBIDDEN_MODULES = {"urllib", "http", "requests", "httpx", "aiohttp", "socket", "ssl",
                      "urllib3", "pycurl"}
-FORBIDDEN_CALLS = {"urlopen", "request", "_send", "_call", "_list", "_download"}
+# download_raw joined the list in 0.8.1: downloads go through files.download_bytes(),
+# which sanitises the server filename (one sanitiser, the SDK's).
+FORBIDDEN_CALLS = {"urlopen", "request", "_send", "_call", "_list", "_download",
+                   "_download_bytes", "download_raw"}
 
 
 def _checker():
@@ -50,8 +53,9 @@ def test_no_http_library_is_imported_by_the_package():
 
 
 def test_no_raw_or_private_transport_call():
-    """Every request goes through a public SDK namespace method. The one raw
-    download (download_raw) is public SDK API on a registry-rendered path."""
+    """Every request goes through a public SDK namespace method, downloads
+    included (0.8.0 used download_raw on a path rendered from the private
+    registry)."""
     offenders = []
     for py in PKG.rglob("*.py"):
         tree = ast.parse(py.read_text(encoding="utf-8"))
@@ -59,6 +63,25 @@ def test_no_raw_or_private_transport_call():
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
                 if node.func.attr in FORBIDDEN_CALLS:
                     offenders.append(f"{py.name}:{node.lineno} .{node.func.attr}(")
+    assert offenders == []
+
+
+def test_no_private_sdk_module_is_imported():
+    """0.8.0 imported meshbook._endpoints; 0.8.1 uses only the SDK's public
+    surface (meshbook, meshbook.config, meshbook.endpoints, meshbook.resources)."""
+    offenders = []
+    for py in PKG.rglob("*.py"):
+        tree = ast.parse(py.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            mods = []
+            if isinstance(node, ast.Import):
+                mods = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                mods = [node.module] + [f"{node.module}.{a.name}" for a in node.names]
+            for m in mods:
+                parts = m.split(".")
+                if parts[0] == "meshbook" and any(x.startswith("_") for x in parts[1:]):
+                    offenders.append(f"{py.name}:{node.lineno} imports {m}")
     assert offenders == []
 
 
@@ -76,7 +99,7 @@ def test_every_mcp_call_exists_in_the_pinned_spec(capsys):
 
 
 def test_mcp_calls_are_sdk_registry_entries():
-    from meshbook._endpoints import ENDPOINTS
+    from meshbook.endpoints import ENDPOINTS
 
     registry = {(e.method, e.path) for e in ENDPOINTS.values()}
     listed = {(e["method"], e["path"]) for e in json.loads(CALLS.read_text(encoding="utf-8"))}

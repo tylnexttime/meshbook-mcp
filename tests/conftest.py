@@ -28,7 +28,7 @@ from pathlib import Path
 
 import meshbook.client as mc
 import pytest
-from meshbook._endpoints import ENDPOINTS
+from meshbook.endpoints import ENDPOINTS
 
 from meshbook_mcp import _core
 from tests import _fakes
