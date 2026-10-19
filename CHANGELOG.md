@@ -4,6 +4,56 @@ All notable changes to `meshbook-mcp` are documented here. The format follows [K
 
 ## [Unreleased]
 
+## [0.8.3] — 2026-10-19
+
+Alder's re-test of the 0.12 clients (Tentyl ty-06d2b52d01a5): `list_events`
+lacked the paging fields meshbook-cli's `--json` envelope carries. So did
+every other listing. Thanks to Alder for the re-test.
+
+### Changed
+
+- **Every listing answers one shape**, the CLI envelope's paging fields
+  included: `count`, `total`, `truncated`, `limit`, `offset`, `hasMore`,
+  `paging`, always present and in that order, then `nextOffset` (offset
+  paging) or `nextBefore` (cursor paging) when there is a next page, then
+  `items`, then the tool's own keys (`expanded`, `semantic`, `closedHidden`,
+  `channel`, `mesh`, ...). Before, `limit` and `offset` appeared only when
+  set and non-zero, and nothing named the paging style. Additive: no key a
+  0.8.2 caller read has gone or changed meaning.
+- **`paging` uses the CLI's vocabulary**: `offset` (contacts, companies,
+  leads, projects, tasks, my tasks, events, unread notifications), `before`
+  (`read_thread`, `read_channel`), `limit` (`search_chat`, which takes
+  `limit` only: 0.8.2 called it `none`) or `none` (meshes, mesh members,
+  channels, channel members, exports: the whole set in one answer).
+- **`hasMore`** is true exactly when `nextOffset` or `nextBefore` is
+  present; `truncated` stays true for any "more than this answer", a server
+  cap included (an expanded `list_events` window capped at 500 occurrences
+  is `truncated` with a `note`, but has no next page).
+- **`offset`** is the page's offset under offset paging (0 on the first
+  page), otherwise null; **`limit`** is the page size, null where the call
+  takes none. An unpaged route's server `pageSize` is no longer reported as
+  a `limit` (0.8.2 showed `list_my_meshes` a `limit` equal to its row
+  count).
+- The server instructions mention `hasMore` and `paging`.
+- **README: "Upgrading on Windows"** (Alder's upgrade, 2026-10-19). With
+  MCP clients still running, pip could not replace the locked
+  `meshbook-mcp.exe` (`WinError 32`, even through its `.deleteme`
+  fallback) and left the old 0.7.0 half-uninstalled as a `~eshbook_mcp`
+  folder in `site-packages`; the new package did land, and the old
+  launcher started it, since the entry point is unchanged. Close every
+  client running meshbook-mcp before `pip install -U`; on `WinError 32`,
+  close them and re-run, and delete any leftover `~eshbook_mcp` folder.
+- Version 0.8.3.
+
+### Fixed
+
+- `list_my_meshes`, `list_mesh_members`, `list_channels`,
+  `list_channel_members` and `export_status` went through the envelope as
+  offset-paged: had the server ever marked one of those answers
+  `truncated`, the envelope would have offered a `nextOffset` the tools
+  have no `offset=` for (not seen in the field; found reading the code).
+  They are `paging: none` now and never offer one.
+
 ## [0.8.2] — 2026-10-19
 
 Alder's 0.12 field test (2026-10-19), turned into fixes: a series time zone,
