@@ -818,6 +818,39 @@ def _default_end(start_iso: str, all_day: bool) -> str:
     return (_dt.datetime.fromisoformat(start_iso) + step).isoformat()
 
 
+#: The RecurrenceIn fields of a stored rule (what update_event re-sends with tz).
+_RULE_KEYS = ("frequency", "intervalN", "untilDate", "countN", "byWeekday", "byMonthDay")
+
+_UTC_CLOCK = (
+    "so it repeats on the UTC clock: its local time moves by an hour when daylight saving "
+    "starts or ends. "
+)
+_ASK_ZONE = (
+    "Ask which IANA zone it belongs to (e.g. Australia/Sydney) and pass tz= to update_event "
+    "or set_event_recurrence."
+)
+
+
+def _zone_note(rule: Any, sent_tz: str | None) -> str | None:
+    """Field note 1: a series with no stored zone drifts an hour at DST. Say
+    so in the answer, so the model can ask, rather than leave a 10:00
+    meeting to turn into 09:00 for every reader in April."""
+    if not isinstance(rule, dict) or rule.get("tzid"):
+        return None
+    if sent_tz:
+        return (
+            f"tz={sent_tz!r} was sent but the server did not store it (a server older than "
+            "series time zones), " + _UTC_CLOCK + "Nothing to retry until the server is updated."
+        )
+    return "This series has no time zone, " + _UTC_CLOCK + _ASK_ZONE
+
+
+def _noted(out: dict, note: str | None) -> dict:
+    if note:
+        out["note"] = note
+    return out
+
+
 @tool(read_only=True)
 def list_events(
     start: str | None = None,
@@ -895,6 +928,7 @@ def create_event(
     repeat_weekdays: list[str] | None = None,
     force: bool = False,
     mesh: str | None = None,
+    tz: str | None = None,
 ) -> dict:
     """Create a calendar event. `start`/`end` are ISO date-times WITH a UTC
     offset (a naive time is refused). `end` defaults to an hour after
@@ -906,6 +940,10 @@ def create_event(
     defaults to you. Repeat with `repeat` = daily, weekly, fortnightly,
     monthly or yearly, plus optional repeat_interval, repeat_until
     (YYYY-MM-DD, inclusive) or repeat_count, repeat_weekdays (MO..SU).
+    `tz`: the IANA zone a repeating event lives in (e.g. Australia/Sydney),
+    stored as the series' zone so a 10:00 meeting stays 10:00 across daylight
+    saving for every reader; start/end still need their offset. Without it a
+    series repeats on the UTC clock, and the answer's `note` says so.
     Refuses an event with the same title and start already in the mesh
     unless force=true."""
     c = client()
@@ -928,6 +966,7 @@ def create_event(
             color=color,
             attendees=attendees,
             recurrence=rule,
+            tz=tz,
             dedupe=not force,
             mesh=mesh,
         )
@@ -943,7 +982,7 @@ def create_event(
             e.status,
             hint=e.hint,
         ) from e
-    return S.event_out(data, full=True)
+    return _noted(S.event_out(data, full=True), _zone_note(data.get("recurrence"), tz))
 
 
 _EVENT_CLEARABLE = ("description", "location", "meeting_url", "owner", "link", "color", "attendees")
@@ -967,6 +1006,7 @@ def update_event(
     attendees: list[str] | None = None,
     clear: list[str] | None = None,
     mesh: str | None = None,
+    tz: str | None = None,
 ) -> dict:
     """Edit an event (the whole series, for a recurring one). Only the fields
     you pass change. `attendees`, when passed, REPLACES the attendee list
@@ -974,6 +1014,8 @@ def update_event(
     remove_event_attendee for one person. Name a field in `clear` to empty it
     (clearable: description, location, meeting_url, owner, link, color,
     attendees). Recurrence: set_event_recurrence / clear_event_recurrence.
+    `tz` (IANA, e.g. Australia/Sydney) sets the zone a recurring series
+    repeats in, so it keeps its local time across daylight saving.
     Arguments start, end, event_type and the answer's start, end, type are the
     API's startAt, endAt, eventType."""
     c = client()
@@ -1005,9 +1047,28 @@ def update_event(
             kwargs["attendees"] = []
         else:
             kwargs[name] = None
+    note = None
+    if tz is not None:
+        # The PATCH takes a whole rule, so the stored one is re-sent with its
+        # zone (a write that leaves tzid out keeps the stored zone).
+        rule = c.events.get(event_id, mesh=mesh).get("recurrence")
+        if isinstance(rule, dict):
+            kwargs["recurrence"] = {k: rule.get(k) for k in _RULE_KEYS} | {"tzid": tz}
+        elif not kwargs:
+            raise ToolError(
+                "bad_argument",
+                f"Event {event_id} does not repeat, so it has no series zone to set. "
+                "set_event_recurrence makes it repeat, and takes tz= too.",
+            )
+        else:
+            note = (
+                "tz was not applied: this event does not repeat (set_event_recurrence makes "
+                "it repeat, and takes tz= too)."
+            )
     if not kwargs:
         raise ToolError("bad_argument", "Nothing to update: pass a field or clear=[...].")
-    return S.event_out(c.events.update(event_id, mesh=mesh, **kwargs), full=True)
+    data = c.events.update(event_id, mesh=mesh, **kwargs)
+    return _noted(S.event_out(data, full=True), note or _zone_note(data.get("recurrence"), tz))
 
 
 @tool(destructive=True)
@@ -1027,12 +1088,16 @@ def set_event_recurrence(
     weekdays: list[str] | None = None,
     month_days: list[int] | None = None,
     mesh: str | None = None,
+    tz: str | None = None,
 ) -> dict:
     """Make an event repeat (or change how it repeats). `frequency`: daily,
     weekly, fortnightly, monthly or yearly. `until` (YYYY-MM-DD, inclusive)
     or `count` (occurrences, the first included), not both. `weekdays`:
     MO..SU (monthly may use 3TH = third Thursday, -1FR = last Friday).
-    `month_days`: 1..31 or -1 for the last day, monthly only."""
+    `month_days`: 1..31 or -1 for the last day, monthly only. `tz`: the IANA
+    zone the series repeats in (e.g. Australia/Sydney), so it keeps its local
+    time across daylight saving; left out, a zone already stored is kept, and
+    the answer's `note` says when the series has none."""
     rule = client().events.set_recurrence(
         event_id,
         frequency,
@@ -1041,9 +1106,12 @@ def set_event_recurrence(
         count=count,
         by_weekday=weekdays,
         by_month_day=month_days,
+        tzid=tz,
         mesh=mesh,
     )
-    return {"eventId": event_id, "repeats": S.recurrence_text(rule), "recurrence": rule}
+    out = {"eventId": event_id, "repeats": S.recurrence_text(rule),
+           "tz": rule.get("tzid"), "recurrence": rule}
+    return _noted(out, _zone_note(rule, tz))
 
 
 @tool(destructive=True)

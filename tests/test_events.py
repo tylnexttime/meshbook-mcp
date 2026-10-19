@@ -286,3 +286,95 @@ def test_event_tools_document_the_api_field_names(name):
     text = _tool_schema(name).description
     for api_key in ("startAt", "endAt", "eventType"):
         assert api_key in text, (name, api_key)
+
+
+# ─── 0.8.2: a series time zone (field note 1) ──────────────────────────
+
+SYD = "Australia/Sydney"
+RULE_TZ = dict(EVENT["recurrence"], tzid=SYD)
+
+
+def test_create_event_tz_becomes_the_series_tzid(api):
+    api.add("POST", CAL, ok(dict(EVENT, recurrence=RULE_TZ)))
+    out = server.create_event("Standup", "2027-03-23T10:00:00+11:00", repeat="weekly",
+                              tz=SYD, force=True)
+    assert api.body()["recurrence"] == {"frequency": "Weekly", "intervalN": 1,
+                                        "untilDate": None, "tzid": SYD}
+    assert out["recurrence"]["tzid"] == SYD and out["repeats"].endswith(f"in {SYD}")
+    assert "note" not in out
+
+
+def test_create_event_series_without_tz_says_dst_will_shift_it(api):
+    api.add("POST", CAL, ok(EVENT))                      # the stored rule has no tzid
+    out = server.create_event("Standup", "2027-03-23T10:00:00+11:00", repeat="weekly",
+                              force=True)
+    assert "tzid" not in api.body()["recurrence"]
+    note = out["note"]
+    assert "no time zone" in note and "daylight saving" in note and "tz=" in note
+
+
+def test_create_event_tz_the_server_did_not_keep_is_reported(api):
+    """A server from before the tzid change ignores the key (extra=ignore)."""
+    api.add("POST", CAL, ok(EVENT))
+    out = server.create_event("Standup", "2027-03-23T10:00:00+11:00", repeat="weekly",
+                              tz=SYD, force=True)
+    assert api.body()["recurrence"]["tzid"] == SYD
+    assert "did not store" in out["note"]
+
+
+def test_create_event_single_event_gets_no_zone_note(api):
+    api.add("POST", CAL, ok(dict(EVENT, recurrence=None)))
+    out = server.create_event("Lunch", "2027-03-23T12:00:00+11:00", tz=SYD, force=True)
+    assert "recurrence" not in api.body() and "note" not in out
+
+
+def test_create_event_refuses_a_malformed_zone_before_the_wire(api):
+    with pytest.raises(server.MeshbookError) as exc:
+        server.create_event("Standup", "2027-03-23T10:00:00+11:00", repeat="weekly",
+                            tz="not a zone!", force=True)
+    assert exc.value.code == "bad_argument"
+    assert not api.calls("POST", CAL)
+
+
+def test_set_event_recurrence_tz(api):
+    api.add("PUT", f"{CAL}/{E1}/recurrence", ok(dict(RULE_TZ, frequency="Weekly")))
+    out = server.set_event_recurrence(E1, "weekly", tz=SYD)
+    assert api.body()["tzid"] == SYD
+    assert out["tz"] == SYD and "note" not in out
+
+
+def test_set_event_recurrence_without_tz_says_so(api):
+    api.add("PUT", f"{CAL}/{E1}/recurrence", ok(EVENT["recurrence"]))
+    out = server.set_event_recurrence(E1, "weekly")
+    assert "tzid" not in api.body()          # absent keeps whatever zone is stored
+    assert out["tz"] is None and "no time zone" in out["note"]
+
+
+def test_update_event_tz_resends_the_series_rule_with_its_zone(api):
+    api.add("GET", f"{CAL}/{E1}", ok(EVENT))
+    api.add("PATCH", f"{CAL}/{E1}", ok(dict(EVENT, recurrence=RULE_TZ)))
+    out = server.update_event(E1, tz=SYD)
+    assert api.body() == {"recurrence": {
+        "frequency": "Weekly", "intervalN": 2, "untilDate": "2026-12-31", "countN": None,
+        "byWeekday": ["TU"], "byMonthDay": None, "tzid": SYD}}
+    assert out["recurrence"]["tzid"] == SYD and "note" not in out
+
+
+def test_update_event_tz_on_a_single_event(api):
+    single = dict(EVENT, recurrence=None)
+    api.add("GET", f"{CAL}/{E1}", ok(single))
+    with pytest.raises(server.MeshbookError) as exc:
+        server.update_event(E1, tz=SYD)
+    assert exc.value.code == "bad_argument" and "does not repeat" in exc.value.message
+    assert not api.calls("PATCH", f"{CAL}/{E1}")
+    api.add("PATCH", f"{CAL}/{E1}", ok(dict(single, title="Retro")))
+    out = server.update_event(E1, title="Retro", tz=SYD)
+    assert api.body() == {"title": "Retro"}
+    assert "does not repeat" in out["note"]
+
+
+def test_update_event_on_a_zoneless_series_says_so(api):
+    api.add("PATCH", f"{CAL}/{E1}", ok(EVENT))
+    out = server.update_event(E1, title="Retro")
+    assert "no time zone" in out["note"]
+    assert not api.calls("GET", f"{CAL}/{E1}")        # no tz, no start: no extra read

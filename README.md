@@ -124,10 +124,10 @@ Most tools act inside one mesh. For each call, the first of these wins:
 | `delete_task` | task_id, mesh? | destructive | Delete a task (soft delete, restorable). |
 | `list_events` | start?, end?, expand?, tz?, owner?, linked_type?, linked_id?, limit?, offset?, mesh? | read | Calendar events overlapping [start, end). |
 | `get_event` | event_id, mesh? | read | One event in full, with its attendees (their ids are what remove_event_attendee takes) and its recurrence rule. |
-| `create_event` | title, start, end?, event_type?, description?, all_day?, location?, meeting_url?, owner?, linked_type?, linked_id?, color?, attendees?, repeat?, repeat_interval?, repeat_until?, repeat_count?, repeat_weekdays?, force?, mesh? | write | Create a calendar event. |
-| `update_event` | event_id, title?, start?, end?, event_type?, description?, all_day?, location?, meeting_url?, owner?, linked_type?, linked_id?, color?, attendees?, clear?, mesh? | write | Edit an event (the whole series, for a recurring one). |
+| `create_event` | title, start, end?, event_type?, description?, all_day?, location?, meeting_url?, owner?, linked_type?, linked_id?, color?, attendees?, repeat?, repeat_interval?, repeat_until?, repeat_count?, repeat_weekdays?, force?, mesh?, tz? | write | Create a calendar event. |
+| `update_event` | event_id, title?, start?, end?, event_type?, description?, all_day?, location?, meeting_url?, owner?, linked_type?, linked_id?, color?, attendees?, clear?, mesh?, tz? | write | Edit an event (the whole series, for a recurring one). |
 | `delete_event` | event_id, mesh? | destructive | Delete an event (the whole series, for a recurring one). |
-| `set_event_recurrence` | event_id, frequency, interval?, until?, count?, weekdays?, month_days?, mesh? | write | Make an event repeat (or change how it repeats). |
+| `set_event_recurrence` | event_id, frequency, interval?, until?, count?, weekdays?, month_days?, mesh?, tz? | write | Make an event repeat (or change how it repeats). |
 | `clear_event_recurrence` | event_id, mesh? | destructive | Stop an event repeating: it becomes a single event at its own start. |
 | `add_event_attendee` | event_id, user?, contact?, email?, name?, organiser?, optional?, mesh? | write | Add one attendee: exactly one of `user` ('me', @username, name or id; must be a mesh member), `contact` (CRM contact name, email or id) or `email` (an external guest, with an optional `name`). |
 | `remove_event_attendee` | event_id, attendee_id, mesh? | destructive | Remove an attendee by the attendee id get_event shows (not the user id). |

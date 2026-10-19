@@ -234,7 +234,8 @@ def search_hit_out(h: dict[str, Any]) -> dict[str, Any]:
 
 
 def recurrence_text(r: dict[str, Any] | None) -> str | None:
-    """'Weekly every 2 on MO,WE until 2026-12-31' — readable at a glance."""
+    """'Weekly every 2 on MO,WE until 2026-12-31 in Australia/Sydney' — readable
+    at a glance (the zone only when the series has one)."""
     if not r:
         return None
     text = str(r.get("frequency") or "?")
@@ -249,6 +250,8 @@ def recurrence_text(r: dict[str, Any] | None) -> str | None:
         text += f" until {r['untilDate']}"
     elif r.get("countN"):
         text += f", {r['countN']} times"
+    if r.get("tzid"):
+        text += f" in {r['tzid']}"
     return text
 
 
