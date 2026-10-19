@@ -148,6 +148,8 @@ def _stdio_session(tmp_path, calls: list[tuple[str, dict]], extra_env=None):
             proc.kill()
             proc.wait()
         drain.join(timeout=5)
+        proc.stdout.close()
+        proc.stderr.close()
     return answers, b"".join(err_chunks).decode("utf-8", "replace")
 
 
