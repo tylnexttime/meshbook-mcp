@@ -1072,8 +1072,11 @@ def update_event(
         # Field note 2: a new start alone used to keep the old end (an
         # 11:00-11:00 event). Shift the end by the stored length, as
         # `mesh events update` does.
-        length = _length(current)
-        if length is not None:
+        if all_day is not None and all_day != bool(current.get("isAllDay")):
+            # Turning all-day on or off: the old length means nothing, so
+            # create_event's default applies (a day, or an hour).
+            kwargs["end"] = _default_end(given["start"], all_day)
+        elif (length := _length(current)) is not None:
             kwargs["end"] = (_dt.datetime.fromisoformat(given["start"]) + length).isoformat()
     if tz is not None:
         # The PATCH takes a whole rule, so the stored one is re-sent with its

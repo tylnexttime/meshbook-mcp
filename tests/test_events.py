@@ -436,3 +436,17 @@ def test_list_events_says_a_series_zone_beats_tz():
 def test_server_instructions_point_repeating_events_at_tz():
     text = server.mcp.instructions
     assert "tz=" in text and "IANA" in text
+
+
+def test_update_event_turning_all_day_uses_the_create_default_length(api):
+    """A 15-minute meeting moved to a day and made all-day becomes one day,
+    not an all-day event 15 minutes long; and back again, an hour."""
+    api.add("GET", f"{CAL}/{E1}", ok(EVENT))
+    api.add("PATCH", f"{CAL}/{E1}", ok(EVENT))
+    server.update_event(E1, start="2026-10-22T00:00:00+11:00", all_day=True)
+    assert api.body()["endAt"] == "2026-10-23T00:00:00+11:00"
+    all_day = dict(EVENT, isAllDay=True, startAt="2026-10-20T13:00:00+00:00",
+                   endAt="2026-10-22T13:00:00+00:00")
+    api.add("GET", f"{CAL}/{E1}", ok(all_day))
+    server.update_event(E1, start="2026-10-22T09:00:00+11:00", all_day=False)
+    assert api.body()["endAt"] == "2026-10-22T10:00:00+11:00"
