@@ -845,6 +845,19 @@ def _zone_note(rule: Any, sent_tz: str | None) -> str | None:
     return "This series has no time zone, " + _UTC_CLOCK + _ASK_ZONE
 
 
+def _length(event: dict) -> _dt.timedelta | None:
+    """endAt - startAt of a stored event, or None if either is missing or
+    unreadable (then update_event sends the new start alone, as 0.8.1 did)."""
+    try:
+        start = _dt.datetime.fromisoformat(str(event["startAt"]).replace("Z", "+00:00"))
+        end = _dt.datetime.fromisoformat(str(event["endAt"]).replace("Z", "+00:00"))
+    except (KeyError, TypeError, ValueError):
+        return None
+    if start.tzinfo is None or end.tzinfo is None or end < start:
+        return None
+    return end - start
+
+
 def _noted(out: dict, note: str | None) -> dict:
     if note:
         out["note"] = note
@@ -1009,7 +1022,8 @@ def update_event(
     tz: str | None = None,
 ) -> dict:
     """Edit an event (the whole series, for a recurring one). Only the fields
-    you pass change. `attendees`, when passed, REPLACES the attendee list
+    you pass change; `start` without `end` moves the event and keeps its
+    length. `attendees`, when passed, REPLACES the attendee list
     (people kept keep their RSVP); use add_event_attendee /
     remove_event_attendee for one person. Name a field in `clear` to empty it
     (clearable: description, location, meeting_url, owner, link, color,
@@ -1048,10 +1062,19 @@ def update_event(
         else:
             kwargs[name] = None
     note = None
+    keep_length = given["start"] is not None and given["end"] is None
+    current = c.events.get(event_id, mesh=mesh) if (tz is not None or keep_length) else {}
+    if keep_length:
+        # Field note 2: a new start alone used to keep the old end (an
+        # 11:00-11:00 event). Shift the end by the stored length, as
+        # `mesh events update` does.
+        length = _length(current)
+        if length is not None:
+            kwargs["end"] = (_dt.datetime.fromisoformat(given["start"]) + length).isoformat()
     if tz is not None:
         # The PATCH takes a whole rule, so the stored one is re-sent with its
         # zone (a write that leaves tzid out keeps the stored zone).
-        rule = c.events.get(event_id, mesh=mesh).get("recurrence")
+        rule = current.get("recurrence")
         if isinstance(rule, dict):
             kwargs["recurrence"] = {k: rule.get(k) for k in _RULE_KEYS} | {"tzid": tz}
         elif not kwargs:

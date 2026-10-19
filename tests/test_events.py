@@ -378,3 +378,48 @@ def test_update_event_on_a_zoneless_series_says_so(api):
     out = server.update_event(E1, title="Retro")
     assert "no time zone" in out["note"]
     assert not api.calls("GET", f"{CAL}/{E1}")        # no tz, no start: no extra read
+
+
+# ─── 0.8.2: moving an event keeps its length (field note 2) ────────────
+
+
+def test_update_event_start_without_end_keeps_the_duration(api):
+    """0.8.1 sent startAt alone, and the server kept the old end: moving a
+    10:00-11:00 meeting to 11:00 gave 11:00-11:00."""
+    api.add("GET", f"{CAL}/{E1}", ok(EVENT))               # 22:00-22:15 UTC, 15 minutes
+    api.add("PATCH", f"{CAL}/{E1}", ok(EVENT))
+    server.update_event(E1, start="2026-10-22T10:00:00+11:00")
+    assert api.body() == {"startAt": "2026-10-22T10:00:00+11:00",
+                          "endAt": "2026-10-22T10:15:00+11:00"}
+
+
+def test_update_event_all_day_move_keeps_its_days(api):
+    two_days = dict(EVENT, isAllDay=True, startAt="2026-10-20T13:00:00+00:00",
+                    endAt="2026-10-22T13:00:00+00:00")
+    api.add("GET", f"{CAL}/{E1}", ok(two_days))
+    api.add("PATCH", f"{CAL}/{E1}", ok(two_days))
+    server.update_event(E1, start="2026-11-01T00:00:00+11:00")
+    assert api.body()["endAt"] == "2026-11-03T00:00:00+11:00"
+
+
+def test_update_event_with_both_times_reads_nothing_first(api):
+    api.add("PATCH", f"{CAL}/{E1}", ok(EVENT))
+    server.update_event(E1, start="2026-10-22T10:00:00+11:00", end="2026-10-22T12:00:00+11:00")
+    assert not api.calls("GET", f"{CAL}/{E1}")
+    assert api.body()["endAt"] == "2026-10-22T12:00:00+11:00"
+
+
+def test_update_event_start_and_tz_read_the_event_once(api):
+    api.add("GET", f"{CAL}/{E1}", ok(EVENT))
+    api.add("PATCH", f"{CAL}/{E1}", ok(dict(EVENT, recurrence=RULE_TZ)))
+    server.update_event(E1, start="2026-10-22T10:00:00+11:00", tz=SYD)
+    assert len(api.calls("GET", f"{CAL}/{E1}")) == 1
+    body = api.body()
+    assert body["endAt"] == "2026-10-22T10:15:00+11:00" and body["recurrence"]["tzid"] == SYD
+
+
+def test_update_event_start_on_an_event_with_no_stored_end_sends_start_only(api):
+    api.add("GET", f"{CAL}/{E1}", ok(dict(EVENT, endAt=None)))
+    api.add("PATCH", f"{CAL}/{E1}", ok(EVENT))
+    server.update_event(E1, start="2026-10-22T10:00:00+11:00")
+    assert api.body() == {"startAt": "2026-10-22T10:00:00+11:00"}
