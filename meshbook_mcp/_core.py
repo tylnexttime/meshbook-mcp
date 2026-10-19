@@ -314,6 +314,9 @@ def with_hints(fn: F, overrides: Overrides | None = None) -> F:
 # ─── listings ──────────────────────────────────────────────────────────
 
 
+PAGING_MODES = ("offset", "before", "limit", "none")
+
+
 def listing(
     items: Iterable[Any],
     *,
@@ -324,17 +327,31 @@ def listing(
 ) -> dict:
     """The one envelope every list-returning tool answers with.
 
+    Always, in this order (0.8.3: the same paging fields as meshbook-cli's
+    ``--json`` envelope, Alder's re-test): ``count``, ``total``,
+    ``truncated``, ``limit``, ``offset``, ``hasMore``, ``paging``; then
+    ``nextOffset`` / ``nextBefore`` when there is a next page; then
+    ``items``; then the tool's own *extra* keys.
+
     ``count`` is what is in ``items``; ``total`` is the server's TRUE total
     when the SDK says it is one (``ItemList.total_exact``), else ``None``;
-    ``truncated`` says whether there is more
-    than this page, and where to continue:
+    ``hasMore`` says whether another page can be fetched the way *paging*
+    names; ``truncated`` says whether there is more than this answer for
+    any reason (another page, or a server cap such as the 500-occurrence
+    calendar window). ``limit`` is the page size (null when the call has
+    none); ``offset`` is this page's offset under offset paging, else null.
 
-    * ``paging="offset"``: ``nextOffset`` (the tool takes ``offset=``);
-    * ``paging="before"``: ``nextBefore`` = *next_before*, a cursor (chat,
+    *paging* (the CLI's vocabulary) says how to continue:
+
+    * ``"offset"``: ``nextOffset`` (the tool takes ``offset=``);
+    * ``"before"``: ``nextBefore`` = *next_before*, a cursor (chat,
       channel and DM reads: their routes ignore an offset, and since
       meshbook-sdk 0.4.1 the SDK refuses one, so 0.8.0's ``nextOffset``
       there pointed at an argument that could never work);
-    * ``paging="none"``: neither (``search_chat`` takes ``limit`` only).
+    * ``"limit"``: no next page; only a larger ``limit`` reaches more
+      (``search_chat``);
+    * ``"none"``: the whole set in one answer (meshes, members, channels,
+      exports); ``hasMore`` is false, ``truncated`` still tells the truth.
 
     B6 (Wren, 2026-08-20) made ``count`` explicit because a bare ``[]``
     serialises to nothing. It was the page length, though, so a model with
@@ -344,6 +361,8 @@ def listing(
     *rows* is the server page when *items* was filtered client-side (the
     paging maths needs the page as the server sent it).
     """
+    if paging not in PAGING_MODES:
+        raise ValueError(f"paging is one of {', '.join(PAGING_MODES)}, not {paging!r}")
     shown = list(items)
     src: Sequence[Any] = rows if rows is not None else shown
     page_len = len(src)
@@ -375,19 +394,24 @@ def listing(
     else:
         offset, limit, total, more, truncated = 0, None, page_len, False, False
         next_offset = page_len
-    out: dict[str, Any] = {"count": len(shown), "total": total, "truncated": truncated}
-    if limit is not None:
-        out["limit"] = limit
-    if paging == "offset":
-        if offset:
-            out["offset"] = offset
-        if more:
-            out["nextOffset"] = next_offset
-    elif paging == "before":
-        if more and next_before:
-            out["nextBefore"] = next_before
-    elif paging != "none":
-        raise ValueError(f"paging is 'offset', 'before' or 'none', not {paging!r}")
+    if paging == "before":
+        more = bool(more and next_before)   # no time to page from: nothing to offer
+    elif paging == "none":
+        more = False                        # the whole set, in one answer
+        limit = None                        # a server pageSize is not a limit asked for
+    out: dict[str, Any] = {
+        "count": len(shown),
+        "total": total,
+        "truncated": truncated,
+        "limit": limit,
+        "offset": offset if paging == "offset" else None,
+        "hasMore": bool(more),
+        "paging": paging,
+    }
+    if more and paging == "offset":
+        out["nextOffset"] = next_offset
+    elif more and paging == "before":
+        out["nextBefore"] = next_before
     out["items"] = shown
     out.update(extra)
     return out

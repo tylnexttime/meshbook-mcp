@@ -81,8 +81,8 @@ mcp = FastMCP(
         "Date-times must carry a UTC offset (e.g. 2026-10-20T09:00:00+11:00). "
         "For a repeating event pass tz=<IANA zone, e.g. Australia/Sydney> so it keeps "
         "its local time across daylight saving. "
-        "List tools return count, the true total and truncated; page with "
-        "limit/offset=nextOffset, or for chat and channel reads before=nextBefore. "
+        "List tools return count, the true total, truncated, hasMore and paging; "
+        "page with limit/offset=nextOffset, or for chat and channel reads before=nextBefore. "
         "Auth comes from meshbook-cli's config (`mesh login`)."
     ),
 )
@@ -184,7 +184,7 @@ def list_my_meshes() -> dict:
         active = c.active_mesh_id
     except MeshbookError:
         active = None
-    return listing([S.mesh_out(m.raw, active) for m in rows], rows=rows)
+    return listing([S.mesh_out(m.raw, active) for m in rows], rows=rows, paging="none")
 
 
 @tool(idempotent=True)
@@ -251,6 +251,7 @@ def list_mesh_members(mesh: str | None = None, mesh_id: str | None = None) -> di
     members = [S.member_out(m) for m in data.get("members") or []]
     return listing(
         members,
+        paging="none",
         mesh=data.get("mesh"),
         meshId=data.get("meshId"),
         pendingInvites=len(data.get("pendingInvites") or []),
@@ -1279,7 +1280,7 @@ def list_channels(mesh: str | None = None) -> dict:
     """List channels visible to you. Private channels (§88a) appear only if
     you're a member of them."""
     rows = client().channels.list(mesh=mesh)
-    return listing([S.channel_out(ch) for ch in rows], rows=rows)
+    return listing([S.channel_out(ch) for ch in rows], rows=rows, paging="none")
 
 
 @tool(read_only=True)
@@ -1289,7 +1290,7 @@ def list_channel_members(channel: str, mesh: str | None = None) -> dict:
     c = client()
     ch = c.channels.resolve(channel, mesh=mesh)
     rows = c.channels.members(str(ch["id"]), mesh=mesh)
-    return listing(list(rows), rows=rows, channel=ch.get("name"))
+    return listing(list(rows), rows=rows, paging="none", channel=ch.get("name"))
 
 
 @tool(idempotent=True)
@@ -1326,7 +1327,7 @@ def search_chat(query: str, limit: int = 10, mesh: str | None = None) -> dict:
     lim, _ = page(limit, None, maximum=100)
     rows = client().chat.search(query, lim, mesh=mesh)
     return listing(
-        [S.search_hit_out(h) for h in rows], rows=rows, paging="none", semantic=rows.semantic
+        [S.search_hit_out(h) for h in rows], rows=rows, paging="limit", semantic=rows.semantic
     )
 
 
@@ -1511,7 +1512,7 @@ def export_status(mesh_id: str) -> dict:
     c = client()
     found = c.meshes.resolve(mesh_id)
     rows = c.exports.list(found.id)
-    return listing([S.export_out(j.raw) for j in rows], rows=rows, mesh=found.name)
+    return listing([S.export_out(j.raw) for j in rows], rows=rows, paging="none", mesh=found.name)
 
 
 # ─── resources ─────────────────────────────────────────────────────────
