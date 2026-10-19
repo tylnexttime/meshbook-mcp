@@ -4,6 +4,59 @@ All notable changes to `meshbook-mcp` are documented here. The format follows [K
 
 ## [Unreleased]
 
+## [0.8.2] — 2026-10-19
+
+Alder's 0.12 field test (2026-10-19), turned into fixes: a series time zone,
+the CLI's event defaults, and a quiet stderr. Thanks to Alder for the field
+notes (numbers below are theirs) and for the stall that showed how much a
+noisy stderr costs a stdio client.
+
+### Added
+
+- **`tz` on `create_event`, `update_event` and `set_event_recurrence`**
+  (field note 1). An IANA zone that becomes the recurrence's `tzid`
+  (meshbook-sdk 0.4.2), so a weekly 10:00 Sydney series stays at 10:00
+  across daylight saving for every reader, not only for one that passes
+  `list_events(tz=)`. `update_event` re-sends the stored rule with the zone
+  and refuses `tz` alone on an event that does not repeat. When a series
+  has no zone, or the server did not keep the one sent (a server older than
+  series zones), the answer carries a `note` saying it will shift, so the
+  model can ask. `repeats` names the zone ("Weekly on TU in
+  Australia/Sydney"). `tz` is each tool's last parameter.
+
+### Changed
+
+- **Depends on `meshbook-sdk[agent]>=0.4.2,<0.5`** (the recurrence `tzid`
+  and the `server_too_old` hint).
+- **`create_event`'s `end` defaults to `start` + 1 hour** (+ 1 day with
+  `all_day`), like `mesh events create` (field note 7). An explicit `end` is
+  kept; positional 0.8.x callers are unaffected.
+- **The event tools' descriptions name the field mapping** (field note 7):
+  their `start`, `end`, `type`, `allDay` are the API's `startAt`, `endAt`,
+  `eventType`, `isAllDay`.
+- **`server_too_old`** (meshbook-sdk 0.4.2): a registry route the server
+  answers with a bare 404 is told to the model as an old server, not a
+  missing record. The code is still `http_error`.
+- **stderr is quiet** (field note 8). An expected error (any
+  `MeshbookError`, including the MCP's own `ToolError`) is logged as one
+  line and handed to FastMCP below its log level, so no rich traceback; the
+  text the client sees is unchanged. A genuinely unexpected exception still
+  logs its traceback. At start, FastMCP's banner, its PyPI "Update
+  available" lookup and its rich (80-column wrapped) log handler are turned
+  off through FastMCP's own settings, and its level is WARNING; any
+  `FASTMCP_*` variable set in the environment wins.
+- `list_events` and the server instructions say that a series' own zone
+  beats the list's `tz`, and to pass `tz=` for a repeating event.
+
+### Fixed
+
+- **`update_event` with `start` but no `end` made a zero-length event**
+  (field note 2): the server kept the old end. The tool now reads the event
+  and shifts the end by its stored length; a move that also turns `all_day`
+  on or off takes `create_event`'s default length instead.
+- `list_events` said its `tz` decides how every series repeats; a series
+  with a stored zone repeats in that zone.
+
 ## [0.8.1] — 2026-10-19
 
 A fast follow onto meshbook-sdk 0.4.1: the SDK's public surface replaces

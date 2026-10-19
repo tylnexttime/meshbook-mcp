@@ -79,6 +79,7 @@ Most tools act inside one mesh. For each call, the first of these wins:
 | `MESHBOOK_BASE` | API base URL override (default `https://meshbook.org`) |
 | `MESHBOOK_MESH` | mesh for this process, by name or id |
 | `MESHBOOK_MCP_ALLOW_ANY_PATH` | `1` lets `attach_file` / `download_attachment` use paths outside your home and the current directory |
+| `FASTMCP_SHOW_SERVER_BANNER`, `FASTMCP_CHECK_FOR_UPDATES`, `FASTMCP_LOG_LEVEL`, `FASTMCP_ENABLE_RICH_LOGGING` | FastMCP's own switches. Unset, meshbook-mcp starts with no banner, no update check, and plain one-line log records at WARNING (stdio's stderr stays quiet); set any of them and it wins. |
 
 ## What you get
 
@@ -158,7 +159,7 @@ Most tools act inside one mesh. For each call, the first of these wins:
 - **Updates change only what you pass.** To empty a field, name it in `clear`, e.g. `update_task(task_id, clear=["due"])`. `tags` on an update are added, never removed.
 - **Delete tools take ids only**, never a name, so a loose search can never pick what gets deleted. Deletes are soft (restorable from the web app's recycle bin). `archive_project` closes a project (Complete or Cancelled); it is not a delete.
 - **Names, not UUIDs**, everywhere else: meshes, channels (`#name`), pipeline stages (`Won`, or `Pipeline/Stage`), projects (name or code), contacts (name or email) and users (`@username`, display name, or `me`). An ambiguous name is refused with the candidates, never guessed.
-- **Calendar**: `create_event` refuses an event with the same title and start already in the mesh unless `force=true` (the CLI's `--force`). `list_events` with both `start` and `end` expands recurring events into occurrences; pass `tz` (an IANA zone such as `Australia/Sydney`) so a 09:00 series stays 09:00 across daylight saving.
+- **Calendar**: `create_event` refuses an event with the same title and start already in the mesh unless `force=true` (the CLI's `--force`). Its `end` defaults to an hour after `start` (a day for `all_day`), and `update_event` with a new `start` but no `end` keeps the event's length, both as the CLI does. Pass `tz` (an IANA zone such as `Australia/Sydney`) to `create_event`, `update_event` or `set_event_recurrence` to store the zone a series repeats in, so a 10:00 series stays 10:00 across daylight saving for every reader; without one the answer's `note` says the series will shift. `list_events` with both `start` and `end` expands recurring events into occurrences; its `tz` applies to series without a zone of their own. The event tools take and answer `start`, `end`, `type` (input `event_type`), `allDay`, which are the API's (and `mesh ... --json`'s) `startAt`, `endAt`, `eventType`, `isAllDay`.
 - **Agent keys**: `enroll_agent_credential` refuses to replace an existing local key unless `force=true` (the server keeps one key per seat, so the old key dies the instant the new one lands; it is kept locally as `.bak`).
 
 Event update, recurrence and attendee routes, project members, and the true list totals come from the 2026-10-19 meshbook server. Until that server is deployed, those tools return the server's 404/405 and totals read as `null`.
@@ -191,7 +192,8 @@ The bearer token sits in a plain JSON file. On POSIX it is mode 600; on Windows 
 ## Design notes
 
 - **Built on meshbook-sdk** (config, HTTP, retries on 429/503, the `{ok, data}` / `{error}` envelopes, the agent-JWT lane, name resolution) **and [fastmcp](https://pypi.org/project/fastmcp/)** (the MCP framework, which manages its own low-level `mcp` pin). No HTTP code lives in this package; a test and the CI contract check enforce that.
-- **Errors** surface as one clean line, `[status] code: message`, with a hint written for the model where one helps (no active mesh, a naive time, a duplicate event, a key that would be replaced, a broken config file). Since 0.8.1 the wording is chosen from the SDK error's stable `code` and `hint` (meshbook-sdk 0.4.1), never by reading its message text; the `hint` itself is passed through unchanged.
+- **Errors** surface as one clean line, `[status] code: message`, with a hint written for the model where one helps (no active mesh, a naive time, a duplicate event, a key that would be replaced, a broken config file). Since 0.8.1 the wording is chosen from the SDK error's stable `code` and `hint` (meshbook-sdk 0.4.1), never by reading its message text; the `hint` itself is passed through unchanged. A route the server does not have yet (`hint: server_too_old`, meshbook-sdk 0.4.2) is told to the model as an old server, not a missing record.
+- **stderr stays quiet** (0.8.2). An expected error (any `MeshbookError`: a refused argument, a 404, a revoked token) is logged as one line on stderr, `meshbook-mcp WARNING: <tool>: <code> (<status>): <message>`; only a genuinely unexpected exception logs a traceback. A stdio client that does not drain stderr can otherwise stall once the pipe fills.
 - **Contract check.** `tests/contract/mcp-calls.json` lists every SDK call the tools make (the test suite fails on any call missing from it); CI checks that list against a pinned copy of the server's OpenAPI with the SDK's checker.
 
 ## Development
