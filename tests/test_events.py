@@ -423,3 +423,16 @@ def test_update_event_start_on_an_event_with_no_stored_end_sends_start_only(api)
     api.add("PATCH", f"{CAL}/{E1}", ok(EVENT))
     server.update_event(E1, start="2026-10-22T10:00:00+11:00")
     assert api.body() == {"startAt": "2026-10-22T10:00:00+11:00"}
+
+
+def test_list_events_says_a_series_zone_beats_tz():
+    """The server repeats a series in its stored tzid first, then the list's
+    tz, then UTC (meshbook app/routers/calendar.py, round 3). 0.8.1 said tz
+    decides, which is wrong for any series created with a zone."""
+    text = _tool_schema("list_events").description
+    assert "own zone" in text and "UTC" in text
+
+
+def test_server_instructions_point_repeating_events_at_tz():
+    text = server.mcp.instructions
+    assert "tz=" in text and "IANA" in text

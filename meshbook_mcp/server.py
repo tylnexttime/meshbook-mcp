@@ -79,6 +79,8 @@ mcp = FastMCP(
         "set_active_mesh first if unsure, or pass mesh=<name or id> to any "
         "mesh-scoped tool to act in another mesh for that one call. "
         "Date-times must carry a UTC offset (e.g. 2026-10-20T09:00:00+11:00). "
+        "For a repeating event pass tz=<IANA zone, e.g. Australia/Sydney> so it keeps "
+        "its local time across daylight saving. "
         "List tools return count, the true total and truncated; page with "
         "limit/offset=nextOffset, or for chat and channel reads before=nextBefore. "
         "Auth comes from meshbook-cli's config (`mesh login`)."
@@ -880,9 +882,11 @@ def list_events(
     """Calendar events overlapping [start, end). Date-times need a UTC
     offset, e.g. 2026-10-20T00:00:00+11:00. With both start and end,
     recurring events are expanded into one item per occurrence (expand=false
-    to see each series once). `tz` is the IANA zone recurrences repeat in
-    (e.g. Australia/Sydney, so a 09:00 meeting stays 09:00 across DST; the
-    server defaults to UTC). `owner`: 'me', @username, name or id.
+    to see each series once). A series with its own zone (set with tz= on
+    create_event, update_event or set_event_recurrence) always repeats in
+    it; `tz` (IANA, e.g. Australia/Sydney) is the zone for series without
+    one, so a 09:00 meeting stays 09:00 across DST; else they repeat on UTC.
+    `owner`: 'me', @username, name or id.
     `linked_type`+`linked_id` filter by linked record (e.g. contact + id).
     Items name fields start, end, type, allDay: the API's (and meshbook-cli
     --json's) startAt, endAt, eventType, isAllDay; for an occurrence, start/end
