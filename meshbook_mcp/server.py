@@ -34,7 +34,12 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ResourceError as _FastMCPResourceError
 from fastmcp.exceptions import ToolError as _FastMCPToolError
 from meshbook import ItemList, MeshbookError, recurrence_rule
-from meshbook.resources import PRIORITIES, PROJECT_ROLES, STATUSES
+from meshbook.resources import (
+    PRIORITIES,
+    PROJECT_ROLES,
+    STATUSES,
+    notification_is_read,
+)
 
 from meshbook_mcp import _shapes as S
 from meshbook_mcp._core import (
@@ -1436,13 +1441,77 @@ def revoke_agent_credential() -> dict:
 # ── notifications ──
 
 
+#: The server's largest notification page (``limit ... le=200``): a larger
+#: limit passed local checks in 0.8 and came back a 422 (critique C-10).
+NOTIFICATION_PAGE_MAX = 200
+
+
+def _mesh_namer(c):
+    """meshId -> your name for that mesh, or None.
+
+    Uses ``meshes.resolve``, which reads the client's cached mesh list (one
+    ``GET /api/meshes`` per client), so naming a page of rows costs at most
+    one request. None for a mesh you are not in (a cross-mesh row can be
+    ABOUT another mesh, e.g. an invitation) or when the list cannot be read;
+    after a failure of the list itself no further lookup is tried.
+    """
+    names: dict[str, str | None] = {}
+    broken = False
+
+    def name(mesh_id: Any) -> str | None:
+        nonlocal broken
+        if not mesh_id or broken:
+            return None
+        key = str(mesh_id).lower()
+        if key not in names:
+            try:
+                names[key] = c.meshes.resolve(key).name or None
+            except MeshbookError as e:
+                names[key] = None
+                if e.code not in ("mesh_not_found", "mesh_ambiguous"):
+                    broken = True
+        return names[key]
+
+    return name
+
+
+def _notifications_out(c, rows) -> list[dict]:
+    """The unread rows of a server page, shaped (C-02: ``isRead`` decides).
+
+    The page was already filtered server-side (``unreadOnly``); a row is
+    dropped here only if meshbook says it IS read. 0.8 dropped any row with
+    a ``readAt``, which hid every row that had been read once and then
+    marked unread again.
+    """
+    name = _mesh_namer(c)
+    out = []
+    for n in rows:
+        state = notification_is_read(n)
+        if state is True:
+            continue
+        out.append(S.notification_out(n, is_read=state, mesh_name=name(n.get("meshId"))))
+    return out
+
+
 @tool(read_only=True)
 def list_unread_notifications(limit: int = 50, offset: int = 0, mesh: str | None = None) -> dict:
-    """Your unread meshbook notifications (mentions, invites, assignments, …),
-    filtered server-side so `total` is the true unread count."""
-    lim, off = page(limit, offset)
-    rows = client().notifications.list(unread_only=True, limit=lim, offset=off, mesh=mesh)
-    return listing([S.notification_out(n) for n in rows if not n.get("readAt")], rows=rows)
+    """Your unread meshbook notifications (mentions, invites, assignments, and so on)
+    in one mesh (mesh=, else the active one) plus the cross-mesh rows, newest first.
+
+    Filtered server-side. `total` is NOT your unread count: the server
+    reports only the length of this page, so `total` is null here. For the
+    true count call notification_summary. `limit` is at most 200 (the
+    server's cap); page on with offset=nextOffset.
+
+    Each item keeps 0.8's id, kind, summary and at, and adds title, isRead
+    (the read state: readAt survives a mark-unread), readAt, meshId,
+    meshName, isCrossMesh, severity and link {entityType, entityId,
+    secondaryId}. Once you have handled one, mark_notifications_read([its id]).
+    """
+    lim, off = page(limit, offset, maximum=NOTIFICATION_PAGE_MAX)
+    c = client()
+    rows = c.notifications.list(unread_only=True, limit=lim, offset=off, mesh=mesh)
+    return listing(_notifications_out(c, rows), rows=rows)
 
 
 # ── attachments ──
@@ -1589,9 +1658,11 @@ def resource_my_tasks_today() -> str:
 
 @resource("meshbook://notifications")
 def resource_notifications() -> str:
-    """Your unread meshbook notifications."""
-    rows = client().notifications.list(unread_only=True, limit=100)
-    return json.dumps([S.notification_out(n) for n in rows if not n.get("readAt")], indent=2)
+    """Your unread meshbook notifications (the active mesh plus cross-mesh
+    rows, newest 100), in list_unread_notifications' item shape."""
+    c = client()
+    rows = c.notifications.list(unread_only=True, limit=100)
+    return json.dumps(_notifications_out(c, rows), indent=2)
 
 
 # ─── prompts ───────────────────────────────────────────────────────────

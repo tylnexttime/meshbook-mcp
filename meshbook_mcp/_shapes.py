@@ -171,12 +171,39 @@ def message_out(m: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def notification_out(n: dict[str, Any]) -> dict[str, Any]:
+def notification_out(
+    n: dict[str, Any], *, is_read: bool | None = None, mesh_name: str | None = None
+) -> dict[str, Any]:
+    """One notification for a model to reason over before it marks anything.
+
+    The first four keys are 0.8's, unchanged. 0.9.0 adds (critique C-10):
+    ``isRead``, the read state (*is_read*, from meshbook's
+    ``notification_is_read``: the server keeps ``readAt`` when a row is
+    marked unread, so ``readAt`` alone is not the state); ``readAt``
+    (informational); ``meshId`` and ``meshName`` (the mesh the row belongs
+    to, a name only where it is one of yours); ``isCrossMesh`` (shown in
+    every mesh, e.g. an invitation); ``title``; ``severity``; and ``link``,
+    ``{entityType, entityId, secondaryId}`` or null when it points nowhere.
+    """
+    link_type, link_id = n.get("linkEntityType"), n.get("linkEntityId")
+    secondary = n.get("linkSecondaryId")
     return {
         "id": n.get("id"),
         "kind": n.get("kind"),
         "summary": n.get("summary"),
         "at": _ts(n.get("createdAt")),
+        "title": n.get("title"),
+        "isRead": is_read,
+        "readAt": n.get("readAt"),
+        "meshId": n.get("meshId"),
+        "meshName": mesh_name,
+        "isCrossMesh": bool(n.get("isCrossMesh")),
+        "severity": n.get("severity"),
+        "link": (
+            {"entityType": link_type, "entityId": link_id, "secondaryId": secondary}
+            if link_type or link_id or secondary
+            else None
+        ),
     }
 
 

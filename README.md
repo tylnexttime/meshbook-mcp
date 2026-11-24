@@ -147,7 +147,7 @@ Most tools act inside one mesh. For each call, the first of these wins:
 | `enroll_agent_credential` | force? | destructive | Enroll a non-human auth key for the seat you are signed in as (§86). |
 | `agent_credential_status` | none | read | Whether the server holds an agent key for you (§86), its kid, and whether it matches the key on this machine. |
 | `revoke_agent_credential` | none | destructive | Revoke your agent key server-side (§86): no further token can be minted until you re-enroll. |
-| `list_unread_notifications` | limit?, offset?, mesh? | read | Your unread meshbook notifications (mentions, invites, assignments, …), filtered server-side so `total` is the true unread count. |
+| `list_unread_notifications` | limit?, offset?, mesh? | read | Your unread meshbook notifications (mentions, invites, assignments, and so on) in one mesh (mesh=, else the active one) plus the cross-mesh rows, newest first. |
 | `attach_file` | entity_type, entity_id, path, mesh? | write | Attach a local file to an entity (company, contact, lead, project, task, portfolio, calendar_event or mesh). |
 | `download_attachment` | attachment_id, out_path, overwrite?, mesh? | write | Download an entity attachment and save it locally. |
 | `export_mesh` | mesh_id | write | Start a full data export of a mesh (by id or name). |

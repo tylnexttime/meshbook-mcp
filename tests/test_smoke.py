@@ -18,7 +18,7 @@ import re
 import pytest
 
 from meshbook_mcp import __version__, server
-from tests._fakes import CH1, MESH, MESH2, Err, Resp, ok, ok_list
+from tests._fakes import CH1, MESH, MESH2, Err, Resp, ok, ok_list, unpaged_list
 from tests.conftest import write_config
 
 # ─── registry ──────────────────────────────────────────────────────────
@@ -232,17 +232,22 @@ def test_read_channel_resolves_hash_name(api):
 
 
 def test_list_unread_notifications_filters_read(api):
-    """0.8.0: unread is filtered SERVER-side (unreadOnly=true), so `total`
-    is the true unread count. 0.7 filtered one page client-side and lost
-    any unread notification past it."""
-    api.add("GET", "/api/notifications", ok_list([
-        {"id": "n-1", "kind": "mention", "summary": "hi", "readAt": None,
+    """0.8.0: unread is filtered SERVER-side (unreadOnly=true). 0.7 filtered
+    one page client-side and lost any unread notification past it.
+
+    0.9.0 (critique C-18): 0.8 also said `total` was the true unread count,
+    and this test proved it with total=73 in an ok_page envelope the
+    notifications route never sends. The route answers ok_list(items), whose
+    total is the PAGE length, so the tool reports total null; the true count
+    is notification_summary's."""
+    api.add("GET", "/api/notifications", unpaged_list([
+        {"id": "n-1", "kind": "mention", "summary": "hi", "isRead": False, "readAt": None,
          "createdAt": "2026-07-12T00:00:00Z"},
-    ], total=73, limit=50))
+    ]))
     out = server.list_unread_notifications()
     assert api.query()["unreadOnly"] == "true"
     assert out["count"] == 1
-    assert out["total"] == 73
+    assert out["total"] is None
     assert [n["id"] for n in out["items"]] == ["n-1"]
 
 
