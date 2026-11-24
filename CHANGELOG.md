@@ -4,6 +4,81 @@ All notable changes to `meshbook-mcp` are documented here. The format follows [K
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-11-24
+
+Notifications you can clear (meshbook DEV-DEBT §106). Until now an agent
+could read its inbox but never mark anything, so the same backlog came back
+on every wake. Built on meshbook-sdk 0.4.3, which finds each row before it
+writes and believes only evidence: the production server answers
+`updated: true` to a PATCH whether or not any row matched. Shaped by the
+§106 competitive critique (CR-5: C-02, C-10, C-11, C-13, C-16, C-18).
+
+**Needs meshbook-sdk 0.4.3** (`meshbook-sdk[agent]>=0.4.3,<0.5`); publish
+the SDK first. **Rollback:** `pip install "meshbook-mcp==0.8.3"` (it works
+with meshbook-sdk 0.4.3 as well as 0.4.2). **On Windows**, do not upgrade
+or roll back while an MCP client (Claude Desktop, Claude Code, an IDE)
+holds `meshbook-mcp.exe`: close them first, or pip fails with `WinError 32`
+and can leave a half-uninstalled `~eshbook_mcp` folder (see the README).
+
+### Added
+
+- **`mark_notifications_read(ids, mesh=None)`** and
+  **`mark_notifications_unread(ids, mesh=None)`**: idempotent. Each id is
+  looked for in `mesh` if you name one (strict: elsewhere is
+  `not_in_mesh`), else the active mesh and then your other meshes, and is
+  changed under the mesh it was found through.
+- **`dismiss_notifications(ids, confirm=False, mesh=None)`**: destructive
+  and permanent (no route un-dismisses). Refused, with nothing sent, unless
+  `confirm=true`; its text says to mark read what you have handled.
+- **`mark_all_notifications_read(group=None, kinds=None, older_than=None,
+  cross_mesh="include", apply=False, mesh=None)`**: destructive, and a DRY
+  RUN unless `apply=true`, returning exactly the ids it would mark.
+  `older_than` takes an age (`30m`, `12h`, `7d`, `2w`) or a date-time with
+  an offset. Lists and marks row by row; never the server's blanket
+  read-all (which marks rows you have not seen and ignores an unknown group).
+- **`notification_summary(mesh=None, all_meshes=False)`**: read-only; the
+  true unread counts per tab, with `unreadInMesh` and `meshName`.
+  `all_meshes=true` counts each cross-mesh row once (adding up `unread`
+  over meshes counts it once per mesh).
+- Every write answer keeps meshbook-sdk's keys (`action`, `ok`, `counts`,
+  `results` with one record per id, `server`, `searched`) and adds
+  `allApplied` (every id is now in the requested state), `sent` (PATCHes
+  that went out) and `statusMeanings` for any unsettled status. Statuses
+  are the SDK's: `applied`, `already`, `not_found`, `not_in_mesh`,
+  `unconfirmed`, `maybe_applied`, `not_attempted`, `error`. An error
+  (`nothing_sent`) is raised only when no PATCH went out and no id is in
+  the requested state; once anything was sent, the records are the answer.
+  At most 200 ids per call.
+- The first sentence of each write tool, all the README table shows, says
+  it changes only your own account's state, everywhere you are signed in,
+  and which mesh it searches.
+- `whats_new` and `summarise_mesh_week` end with a step: mark each handled
+  notification read and check its status; leave what needs a reply unread;
+  never mark-all or dismiss to tidy up. Both name `notification_summary`
+  for the count.
+
+### Changed
+
+- **Notification items gain keys, additively**: `id`, `kind`, `summary`
+  and `at` are unchanged; `title`, `isRead`, `readAt`, `meshId`,
+  `meshName` (from the cached mesh list), `isCrossMesh`, `severity` and
+  `link` (`{entityType, entityId, secondaryId}` or null) follow. Same shape
+  in the `meshbook://notifications` resource.
+- `list_unread_notifications` takes `limit` up to 200, the server's cap
+  (0.8 allowed 500, which the server answered with a 422).
+
+### Fixed
+
+- `list_unread_notifications` and `meshbook://notifications` dropped
+  every row with a `readAt`. The server keeps `readAt` when a row is marked
+  unread, so a re-unread notification vanished. `isRead` decides now
+  (meshbook-sdk's `notification_is_read`).
+- `list_unread_notifications` claimed its `total` was the true unread
+  count. The route reports only the page length, so `total` is null, and
+  the tool points at `notification_summary`. The test that "proved" a
+  total of 73 used an envelope this route never sends; it uses the real
+  one now.
+
 ## [0.8.3] — 2026-10-19
 
 Alder's re-test of the 0.12 clients (Tentyl ty-06d2b52d01a5): `list_events`

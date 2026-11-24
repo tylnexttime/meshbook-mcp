@@ -168,6 +168,7 @@ Most tools act inside one mesh. For each call, the first of these wins:
 - **Names, not UUIDs**, everywhere else: meshes, channels (`#name`), pipeline stages (`Won`, or `Pipeline/Stage`), projects (name or code), contacts (name or email) and users (`@username`, display name, or `me`). An ambiguous name is refused with the candidates, never guessed.
 - **Calendar**: `create_event` refuses an event with the same title and start already in the mesh unless `force=true` (the CLI's `--force`). Its `end` defaults to an hour after `start` (a day for `all_day`), and `update_event` with a new `start` but no `end` keeps the event's length, both as the CLI does. Pass `tz` (an IANA zone such as `Australia/Sydney`) to `create_event`, `update_event` or `set_event_recurrence` to store the zone a series repeats in, so a 10:00 series stays 10:00 across daylight saving for every reader; without one the answer's `note` says the series will shift. `list_events` with both `start` and `end` expands recurring events into occurrences; its `tz` applies to series without a zone of their own. The event tools take and answer `start`, `end`, `type` (input `event_type`), `allDay`, which are the API's (and `mesh ... --json`'s) `startAt`, `endAt`, `eventType`, `isAllDay`.
 - **Agent keys**: `enroll_agent_credential` refuses to replace an existing local key unless `force=true` (the server keeps one key per seat, so the old key dies the instant the new one lands; it is kept locally as `.bak`).
+- **Notifications** (0.9.0, meshbook-sdk 0.4.3). A notification belongs to your ACCOUNT: marking one changes your inbox on every bench, listener and web session signed in as you, and nobody else's. `isRead` is the read state (the server keeps `readAt` on a row marked unread). `list_unread_notifications`' `total` is null, because the route reports only the page length; `notification_summary` has the true counts (one mesh plus the cross-mesh rows; `all_meshes=true` counts cross-mesh rows once). The write tools find each id first and believe only evidence, never the server's bare `updated: true`: every answer has `allApplied` and one record per id whose `status` is `applied`, `already`, `not_found`, `not_in_mesh`, `unconfirmed`, `maybe_applied`, `not_attempted` or `error` (only the first two mean the row is in the state you asked for). A tool raises an error only when nothing was sent and no id is in that state. `mark_all_notifications_read` is a dry run unless `apply=true`. `dismiss_notifications` is permanent (no route un-dismisses) and needs `confirm=true`; to record that you handled something, mark it read. At most 200 ids per call.
 
 Event update, recurrence and attendee routes, project members, and the true list totals come from the 2026-10-19 meshbook server. Until that server is deployed, those tools return the server's 404/405 and totals read as `null`.
 
@@ -176,13 +177,13 @@ Event update, recurrence and attendee routes, project members, and the true list
 - `meshbook://my-meshes` — membership snapshot
 - `meshbook://active-mesh` — which mesh you're operating in, and where that came from
 - `meshbook://my-tasks-today` — due today (by this machine's date) or overdue, plus open undated tasks
-- `meshbook://notifications` — unread notifications
+- `meshbook://notifications` — unread notifications (the active mesh plus cross-mesh rows, newest 100), in `list_unread_notifications`' item shape
 
 ### Prompts
 
 - `triage_leads` — walk the pipeline, propose stage moves
-- `summarise_mesh_week` — one-page weekly digest of the active mesh, calendar included
-- `whats_new` — quick catch-up on notifications, chat and what's coming up
+- `summarise_mesh_week` — one-page weekly digest of the active mesh, calendar included; marks the notifications it handled read
+- `whats_new` — quick catch-up on notifications, chat and what's coming up; marks the notifications it handled read (never mark-all or dismiss)
 
 ## Files and transport
 
