@@ -189,6 +189,14 @@
   },
   {
     "method": "GET",
+    "path": "/api/notifications/summary"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/notifications/{notification_id}"
+  },
+  {
+    "method": "GET",
     "path": "/api/pipelines"
   },
   {

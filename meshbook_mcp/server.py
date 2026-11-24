@@ -26,6 +26,7 @@ import functools
 import json
 import logging
 import os
+import re
 import warnings
 from typing import Any
 
@@ -35,8 +36,10 @@ from fastmcp.exceptions import ResourceError as _FastMCPResourceError
 from fastmcp.exceptions import ToolError as _FastMCPToolError
 from meshbook import ItemList, MeshbookError, recurrence_rule
 from meshbook.resources import (
+    NOTIFICATION_STATUSES,
     PRIORITIES,
     PROJECT_ROLES,
+    SETTLED_STATUSES,
     STATUSES,
     notification_is_read,
 )
@@ -1514,6 +1517,236 @@ def list_unread_notifications(limit: int = 50, offset: int = 0, mesh: str | None
     return listing(_notifications_out(c, rows), rows=rows)
 
 
+@tool(read_only=True)
+def notification_summary(mesh: str | None = None, all_meshes: bool = False) -> dict:
+    """Your TRUE unread notification counts, not a page: per tab (mentions,
+    invites, assignments, mesh, system) plus unread, unreadCrossMesh,
+    unreadInMesh and total (read rows too).
+
+    One mesh (mesh=, else the active one) counts that mesh's rows PLUS the
+    cross-mesh rows (invitations and the like, which show in every mesh);
+    unreadInMesh is that mesh's own. Never add `unread` up across meshes:
+    each cross-mesh row would be counted once per mesh. all_meshes=true
+    gives the correct total over every mesh you belong to (cross-mesh rows
+    once), with a per-mesh breakdown in `meshes`; `skipped` lists meshes
+    whose count was refused (e.g. outside a scoped token) and `complete` is
+    false when any were. Changes nothing.
+    """
+    c = client()
+    out = dict(c.notifications.summary(mesh=mesh, all_meshes=all_meshes))
+    if not out.get("allMeshes"):
+        out["meshName"] = _mesh_namer(c)(out.get("meshId"))
+    return out
+
+
+#: How each write tool reports an id it could not settle, for the model.
+_RETRY_ADVICE = (
+    "Before retrying an id that is maybe_applied or unconfirmed, check it with "
+    "list_unread_notifications or notification_summary: the change may have landed."
+)
+
+
+def _write_result(out: dict) -> dict:
+    """An SDK write result, as a tool answers it.
+
+    The SDK's keys are all kept (``ok``, ``counts``, ``results`` with one
+    record per id, ``server``, ``searched``); added in front: ``allApplied``
+    (every id is now in the requested state: applied, or already was) and
+    ``sent`` (how many PATCHes went out). When not every id settled,
+    ``statusMeanings`` explains each unsettled status present.
+
+    Raises ToolError only when NOTHING was sent and no id is in the
+    requested state (every id not_found, not_in_mesh, or unfound within
+    the search limits): then nothing changed and a plain error is the
+    honest answer. Once any PATCH went out, the per-id records are the
+    answer, never an error (critique C-11).
+    """
+    results = list(out.get("results") or [])
+    sent = sum(1 for r in results if r.get("sent"))
+    settled = sum(1 for r in results if r.get("status") in SETTLED_STATUSES)
+    if results and not sent and not settled:
+        raise ToolError("nothing_sent", _nothing_sent(results))
+    res: dict[str, Any] = {
+        "action": out.get("action"),
+        "allApplied": bool(out.get("ok")),
+        "sent": sent,
+        "counts": dict(out.get("counts") or {}),
+    }
+    res.update(out)
+    unsettled = sorted({r["status"] for r in results if r.get("status") not in SETTLED_STATUSES})
+    if unsettled:
+        res["statusMeanings"] = {s: NOTIFICATION_STATUSES.get(s, "") for s in unsettled}
+        if {"maybe_applied", "unconfirmed"} & set(unsettled):
+            res["note"] = _RETRY_ADVICE
+    return res
+
+
+def _nothing_sent(results: list[dict]) -> str:
+    by_status: dict[str, list[str]] = {}
+    for r in results:
+        by_status.setdefault(str(r.get("status")), []).append(str(r.get("id")))
+    parts = []
+    for status, ids in by_status.items():
+        shown = ", ".join(ids[:5]) + (f" and {len(ids) - 5} more" if len(ids) > 5 else "")
+        meaning = NOTIFICATION_STATUSES.get(status, "")
+        parts.append(f"{len(ids)} {status} ({shown}): {meaning}")
+    tail = ""
+    if "not_in_mesh" in by_status:
+        tail = " Leave mesh= out to search every mesh you belong to."
+    return "Nothing was sent and no notification changed. " + "; ".join(parts) + "." + tail
+
+
+@tool(idempotent=True)
+def mark_notifications_read(ids: list[str] | str, mesh: str | None = None) -> dict:
+    """Changes only your own account's read state, everywhere you are signed in: marks
+    the listed notification ids READ, looking for each in `mesh` if you name one, else in
+    the active mesh and then your other meshes.
+
+    Every bench, listener and web session signed in as you sees the change;
+    nobody else's inbox changes. Use it once you have handled a
+    notification. ids: one id or a list (at most 200
+    per call, UUIDs only). A named mesh is strict: an id not visible there is
+    not_in_mesh and no other mesh is tried.
+
+    Answers allApplied (every id is now read), sent, counts by status, and
+    results: one record per id {id, status, sent, mesh (the mesh the change
+    went under), kind, title, message, code, hint}. Statuses: applied,
+    already, not_found, not_in_mesh, unconfirmed, maybe_applied,
+    not_attempted, error. Never trust a bare success: only applied or
+    already mean the row is read. An error is raised only when nothing was
+    sent and no id is read.
+    """
+    return _write_result(client().notifications.mark_read(ids, mesh=mesh))
+
+
+@tool(idempotent=True)
+def mark_notifications_unread(ids: list[str] | str, mesh: str | None = None) -> dict:
+    """Changes only your own account's read state, everywhere you are signed in: marks
+    the listed notification ids UNREAD, looking for each in `mesh` if you name one, else in
+    the active mesh and then your other meshes.
+
+    The reverse of mark_notifications_read, with the same arguments, reach
+    and answer (allApplied: every id is now unread). Use it to put back
+    something you marked read by mistake, or to keep it in front of you.
+    """
+    return _write_result(client().notifications.mark_unread(ids, mesh=mesh))
+
+
+@tool(destructive=True)
+def dismiss_notifications(
+    ids: list[str] | str, confirm: bool = False, mesh: str | None = None
+) -> dict:
+    """Changes only your own account's inbox, everywhere you are signed in, and
+    PERMANENTLY: hides the listed notification ids for good, looking for each in `mesh` if
+    you name one, else in the active mesh and then your other meshes.
+
+    Irreversible: no tool or route un-dismisses, and a dismissed row vanishes
+    from every listing, count and client signed in as you (nobody else's
+    inbox changes). To record that you HANDLED something, use
+    mark_notifications_read instead; never dismiss to tidy up, and never an
+    invitation you have not answered. Refused unless confirm=true. ids: one
+    id or a list (at most 200). Answers as mark_notifications_read
+    (allApplied: every id is now dismissed); a row already dismissed is
+    invisible, so it reports not_found.
+    """
+    if confirm is not True:
+        raise ToolError(
+            "bad_argument",
+            "dismiss_notifications hides notifications PERMANENTLY and cannot be undone. Call "
+            "it again with confirm=true if you mean that; to record that you handled them, use "
+            "mark_notifications_read instead. Nothing was sent.",
+            hint="confirm_irreversible",
+        )
+    return _write_result(client().notifications.dismiss(ids, mesh=mesh, confirm=True))
+
+
+#: An age for ``older_than``: 30m, 12h, 7d, 2w.
+_AGE = re.compile(r"^\s*(\d+)\s*([mhdw])\s*$", re.IGNORECASE)
+_AGE_UNITS = {"m": "minutes", "h": "hours", "d": "days", "w": "weeks"}
+
+_OLDER_THAN_HINT = (
+    "older_than is an age such as '30m', '12h', '7d' or '2w', or a date-time WITH a UTC "
+    "offset such as '2026-11-20T09:00:00+11:00'. Nothing was sent."
+)
+
+
+def _older_than(value: str | None) -> Any:
+    """An age ('7d') -> timedelta; anything else goes to the SDK as a cutoff."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ToolError("bad_argument", _OLDER_THAN_HINT)
+    m = _AGE.match(value)
+    if m:
+        return _dt.timedelta(**{_AGE_UNITS[m.group(2).lower()]: int(m.group(1))})
+    return value.strip()
+
+
+@tool(
+    destructive=True,
+    hints={
+        "no_active_mesh": lambda e: (
+            "mark_all_notifications_read needs a mesh: pass mesh=<name or id>, call "
+            "set_active_mesh, or pass cross_mesh='only' to mark the cross-mesh rows alone. "
+            "Nothing was sent."
+        ),
+        "naive_datetime": lambda e: _OLDER_THAN_HINT,
+        "bad_datetime": lambda e: _OLDER_THAN_HINT,
+    },
+)
+def mark_all_notifications_read(
+    group: str | None = None,
+    kinds: list[str] | str | None = None,
+    older_than: str | None = None,
+    cross_mesh: str = "include",
+    apply: bool = False,
+    mesh: str | None = None,
+) -> dict:
+    """Changes only your own account's read state, everywhere you are signed in: marks
+    every matching UNREAD notification in one mesh (`mesh`, else the active one) plus the
+    cross-mesh rows read, and is a DRY RUN that changes nothing unless apply=true.
+
+    The dry run returns exactly the ids it would mark (newest first, at most
+    200 per call; `remaining` counts matches beyond that) with their kind,
+    title and mesh: review them, then call again with apply=true, or pass
+    the ids you mean to mark_notifications_read (rows arriving in between
+    are picked up by apply=true, not by the ids). Only rows you have seen
+    should be cleared: prefer marking what you handled.
+
+    Filters: group (mentions, invites, assignments, mesh or system), kinds
+    (a kind or a list, e.g. 'Mention'), older_than (an age such as '7d' or
+    a date-time with an offset: only rows created before it), cross_mesh
+    ('include' the default, 'exclude', or 'only': cross-mesh rows show in
+    every mesh). With apply=true it answers allApplied and counts by status,
+    and `outcome` holds the per-id records as mark_notifications_read gives
+    them. Never calls the server's blanket read-all.
+    """
+    out = dict(
+        client().notifications.read_all(
+            group=group,
+            mesh=mesh,
+            apply=apply,
+            older_than=_older_than(older_than),
+            kinds=kinds,
+            cross_mesh=cross_mesh,
+        )
+    )
+    outcome = out.get("outcome")
+    if outcome is None:
+        res: dict[str, Any] = {"allApplied": None, "counts": None}
+        res.update(out)
+        res["note"] = (
+            "Dry run: nothing was changed. Call again with apply=true to mark these, or pass "
+            "the ids you mean to mark_notifications_read."
+        )
+        return res
+    shaped = _write_result(outcome)
+    res = {"allApplied": shaped["allApplied"], "counts": shaped["counts"]}
+    res.update(out)
+    res["outcome"] = shaped
+    return res
+
+
 # ── attachments ──
 
 
@@ -1694,10 +1927,16 @@ def summarise_mesh_week() -> str:
         "mentioned in the thread, e.g. read_channel('general', 30)).\n"
         "3. list_leads and list_my_tasks for pipeline and workload movement.\n"
         "4. list_events for the last 7 days and the next 7 (with a UTC offset on both ends).\n"
-        "5. list_unread_notifications for anything addressed to me.\n\n"
+        "5. list_unread_notifications for anything addressed to me (notification_summary "
+        "gives the true unread count; page on with offset=nextOffset while hasMore).\n"
+        "6. Mark what you have handled: once a notification is fully covered by this summary "
+        "and needs nothing more from me, mark_notifications_read with its id, and check that "
+        "its status is applied or already. Leave anything that still needs my reply unread. "
+        "Never use mark_all_notifications_read or dismiss_notifications to tidy up.\n\n"
         "Structure the summary as: Headlines (3 bullets) · Conversations worth reading · "
         "Pipeline changes · Calendar · My open tasks (due first) · Suggested next actions. "
-        "Only include the last 7 days; note the mesh name at the top."
+        "Only include the last 7 days; note the mesh name at the top, and say which "
+        "notifications you marked read."
     )
 
 
@@ -1706,12 +1945,18 @@ def whats_new() -> str:
     """Quick catch-up: unread notifications, latest chat, what's on today."""
     return (
         "Catch me up on meshbook, quickly.\n\n"
-        "1. list_unread_notifications — anything addressed to me comes first.\n"
+        "1. list_unread_notifications — anything addressed to me comes first "
+        "(notification_summary gives the true unread count).\n"
         "2. read_thread(limit=15) on the active mesh for the latest conversation.\n"
         "3. list_events from now to the end of tomorrow (with a UTC offset) for what's coming.\n"
-        "4. If a notification points at a channel, read_channel it for context.\n\n"
+        "4. If a notification points at a channel, read_channel it for context.\n"
+        "5. Mark what you have handled: once a notification is just FYI and reported here, or "
+        "has been dealt with, mark_notifications_read with its id, and check that its status "
+        "is applied or already. Leave anything that still needs my reply unread. Never use "
+        "mark_all_notifications_read or dismiss_notifications to tidy up.\n\n"
         "Answer in under 10 bullets: what needs my reply, what's just FYI, and one-line "
-        "suggestions for anything actionable (with the tool call you'd make)."
+        "suggestions for anything actionable (with the tool call you'd make). Say which "
+        "notifications you marked read."
     )
 
 
